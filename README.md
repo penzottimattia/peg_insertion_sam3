@@ -173,23 +173,25 @@ The CLI supports `inspect`, `check-prompts`, and `analyze`.
 
 ## Metrics
 
-For peg centroid `(x_p, y_p)`, fixed holder centroid `(x_h, y_h)`, and hand lower-left bounding-box reference `(x_g, y_g)`:
-
-```text
-peg_u = x_p - x_h
-peg_v = y_p - y_h
-
-lateral_slip = [(x_p - x_g) at t] - median_pre(x_p - x_g)
-axial_slip   = [(y_p - y_g) at t] - median_pre(y_p - y_g)
-insertion_depth = peg_v(t) - median_pre(peg_v)
-```
-
-Recommended fields:
-
-- `secondary / lateral_slip_px` for lateral failure analysis
-- `main / axial_slip_px` for main-view slippage
-- `main / insertion_depth_px` for insertion depth
-- corresponding `_mm` fields for approximate view-specific physical units
+| Aspect | Method |
+|---|---|
+| Insertion onset | The first frame after the single detected timestamp gap. |
+| Baseline | Median of the last five valid pre-insertion frames. |
+| Insertion depth | Main-camera reduction in the peg's visible length relative to the pre-insertion baseline. |
+| Axial slip | Main-camera change in peg length above the hand reference, measured along the estimated peg axis. |
+| Lateral slip | Secondary-camera change in signed perpendicular distance from the hand reference to the estimated peg centerline. |
+| Hand reference | Bottommost row of the hand mask, using the median horizontal coordinate of pixels on that row. |
+| Peg geometry | Principal-axis analysis of the peg mask, with visible length and width obtained from projection extents. |
+| Holder | The holder mask is validated but is not used in the current metric calculations. |
+| Main-camera scale | Peg length in millimetres divided by visible peg length in frame 0. |
+| Secondary-camera scale | Peg width in millimetres divided by visible peg width in frame 0. |
+| Millimetre conversion | Each pixel metric is multiplied by the independently estimated scale for its camera view. |
+| Peg angle | Signed image-plane angle relative to downward image vertical. |
+| Angular error | Absolute value of the peg angle. |
+| Initial angular metrics | Values at the insertion-start frame. |
+| Final angular metrics | Values at the frame of maximum measured insertion depth. |
+| Summary extrema | Maximum depth and axial/lateral slip extrema are computed over valid insertion-phase frames. |
+| Pre-insertion noise | Count, sample standard deviation, and median absolute deviation over all valid pre-insertion values. |
 
 ## Outputs
 
