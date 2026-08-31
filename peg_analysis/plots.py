@@ -13,14 +13,45 @@ def _mean_ci95(values):
     return mean, half
 
 
-def _distribution(ax, values, label, ylabel):
+def _distribution(ax, values, label, ylabel, trial_labels, colors):
     values = np.asarray(values, dtype=float)
-    values = values[np.isfinite(values)]
-    mean, ci = _mean_ci95(values)
-    ax.bar([0], [mean], width=0.45, color="0.75", edgecolor="0.2", yerr=[ci], capsize=6)
-    if len(values):
-        offsets = np.linspace(-0.12, 0.12, len(values)) if len(values) > 1 else np.array([0.0])
-        ax.scatter(offsets, values, color="black", s=28, zorder=3)
+    valid = np.isfinite(values)
+    clean = values[valid]
+    mean, ci = _mean_ci95(clean)
+    ax.bar(
+        [0], [mean], width=0.45, color="0.85", edgecolor="0.35",
+        yerr=[ci], capsize=6, zorder=1,
+    )
+    if len(clean):
+        valid_indices = np.flatnonzero(valid)
+        offsets = (
+            np.linspace(-0.13, 0.13, len(valid_indices))
+            if len(valid_indices) > 1 else np.array([0.0])
+        )
+        value_span = float(np.ptp(clean))
+        label_dy = 0.018 * value_span if value_span > 0 else 0.02 * max(abs(mean), 1.0)
+        for offset, index in zip(offsets, valid_indices):
+            color = colors[index]
+            value = values[index]
+            ax.scatter(offset, value, color=color, edgecolor="white", linewidth=0.5,
+                       s=42, zorder=3)
+            # Alternate vertical displacement to reduce collisions while keeping
+            # labels close to their corresponding points.
+            direction = 1 if index % 2 == 0 else -1
+            ax.annotate(
+                trial_labels[index],
+                xy=(offset, value),
+                xytext=(4, direction * 5),
+                textcoords="offset points",
+                color=color,
+                alpha=0.68,
+                fontsize=7,
+                ha="left",
+                va="bottom" if direction > 0 else "top",
+                clip_on=False,
+                zorder=4,
+            )
+    ax.set_xlim(-0.28, 0.32)
     ax.set_xticks([0], [label])
     ax.set_ylabel(ylabel)
 
@@ -36,10 +67,28 @@ def make_plots(c, summary_path=None):
     plots_dir = output_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
 
-    fig, axes = plt.subplots(1, 3, figsize=(10, 4))
-    _distribution(axes[0], data.max_insertion_depth_mm, "Depth", "Maximum insertion depth (mm)")
-    _distribution(axes[1], data.max_abs_axial_slip_mm, "Axial", "Maximum absolute slip (mm)")
-    _distribution(axes[2], data.max_lateral_slip_away_mm, "Lateral", "Maximum slip away (mm)")
+    # Stable short trial labels and colors are shared across every panel.
+    trial_labels = [f"T{i+1:02d}" for i in range(len(data))]
+    cmap = plt.colormaps.get_cmap("turbo")
+    positions = np.linspace(0.05, 0.95, max(len(data), 1))
+    colors = [cmap(position) for position in positions[:len(data)]]
+    trial_key = data[["demo"]].copy()
+    trial_key.insert(0, "trial_label", trial_labels)
+    trial_key.to_csv(plots_dir / "trial_key.csv", index=False)
+
+    fig, axes = plt.subplots(1, 3, figsize=(11.5, 4.2))
+    _distribution(
+        axes[0], data.max_insertion_depth_mm, "Depth",
+        "Maximum insertion depth (mm)", trial_labels, colors,
+    )
+    _distribution(
+        axes[1], data.max_abs_axial_slip_mm, "Axial",
+        "Maximum absolute slip (mm)", trial_labels, colors,
+    )
+    _distribution(
+        axes[2], data.max_lateral_slip_away_mm, "Lateral",
+        "Maximum slip away (mm)", trial_labels, colors,
+    )
     fig.tight_layout()
     fig.savefig(plots_dir / "outcome_distributions.png", dpi=200, bbox_inches="tight")
     plt.close(fig)
