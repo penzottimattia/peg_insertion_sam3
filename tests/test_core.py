@@ -21,3 +21,14 @@ def test_thumb_and_axial_length():
     peg, hand = feat(peg_mask), feat(hand_mask)
     assert np.allclose(hand["thumb_tip"], [5.5, 9.0])
     assert np.isclose(axial_above_thumb_length(peg, hand), 7.0)
+
+
+def test_visible_width_and_robust_noise():
+    from peg_analysis.core import dimension_scale, robust_noise
+    mask = np.zeros((20, 20), dtype=bool)
+    mask[2:12, 8:11] = True
+    f = feat(mask)
+    assert np.isclose(f["visible_width"], 2.0)
+    assert np.isclose(dimension_scale(f, 4.0, "visible_width"), 2.0)
+    n, std, mad = robust_noise([1.0, 2.0, 3.0, np.nan])
+    assert n == 3 and std > 0 and mad == 1.0

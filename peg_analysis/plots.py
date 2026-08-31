@@ -33,7 +33,7 @@ def _distribution(ax, values, label, ylabel, trial_labels, colors):
         for offset, index in zip(offsets, valid_indices):
             color = colors[index]
             value = values[index]
-            ax.scatter(offset, value, color=color, edgecolor="white", linewidth=0.5,
+            ax.scatter([offset], [value], color=color, edgecolor="white", linewidth=0.5,
                        s=42, zorder=3)
             # Alternate vertical displacement to reduce collisions while keeping
             # labels close to their corresponding points.
@@ -56,6 +56,20 @@ def _distribution(ax, values, label, ylabel, trial_labels, colors):
     ax.set_ylabel(ylabel)
 
 
+def _lateral_summary_column(data):
+    """Prefer the current lateral metric while accepting legacy summaries."""
+    current = "max_abs_lateral_slip_mm"
+    legacy = "max_lateral_slip_away_mm"
+    if current in data.columns:
+        return current, "Maximum absolute lateral slip (mm)"
+    if legacy in data.columns:
+        return legacy, "Maximum slip away (mm) [legacy]"
+    raise ValueError(
+        "Summary CSV has neither max_abs_lateral_slip_mm nor "
+        "max_lateral_slip_away_mm. Re-run analyze or inspect the CSV schema."
+    )
+
+
 def make_plots(c, summary_path=None):
     import matplotlib.pyplot as plt
     import pandas as pd
@@ -64,6 +78,7 @@ def make_plots(c, summary_path=None):
     if not summary_path.exists():
         raise FileNotFoundError(f"Summary CSV not found: {summary_path}")
     data = pd.read_csv(summary_path)
+    lateral_column, lateral_ylabel = _lateral_summary_column(data)
     plots_dir = output_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
 
@@ -86,8 +101,8 @@ def make_plots(c, summary_path=None):
         "Maximum absolute slip (mm)", trial_labels, colors,
     )
     _distribution(
-        axes[2], data.max_lateral_slip_away_mm, "Lateral",
-        "Maximum slip away (mm)", trial_labels, colors,
+        axes[2], data[lateral_column], "Lateral",
+        lateral_ylabel, trial_labels, colors,
     )
     fig.tight_layout()
     fig.savefig(plots_dir / "outcome_distributions.png", dpi=200, bbox_inches="tight")
@@ -114,3 +129,47 @@ def make_plots(c, summary_path=None):
     fig.savefig(plots_dir / "initial_angle_vs_depth.png", dpi=200, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved plots: {plots_dir}")
+
+
+def merge_plots(output_dirs, destination="merged_plots"):
+    """Merge summary.csv files from multiple analysis output directories and plot them."""
+    import pandas as pd
+
+    output_dirs = [Path(path).expanduser().resolve() for path in output_dirs]
+    if len(output_dirs) < 2:
+        raise ValueError("merge-plot requires at least two output directories")
+
+    frames = []
+    for output_dir in output_dirs:
+        summary_path = output_dir / "summary.csv"
+        if not summary_path.is_file():
+            raise FileNotFoundError(f"Summary CSV not found: {summary_path}")
+        frame = pd.read_csv(summary_path)
+        frame.insert(0, "source_output_dir", str(output_dir))
+        frame.insert(0, "source_label", output_dir.name)
+        frames.append(frame)
+
+    data = pd.concat(frames, ignore_index=True, sort=False)
+    destination = Path(destination).expanduser().resolve()
+    destination.mkdir(parents=True, exist_ok=True)
+    merged_summary = destination / "merged_summary.csv"
+    data.to_csv(merged_summary, index=False)
+
+    plot_config = {"output_dir": str(destination)}
+    make_plots(plot_config, merged_summary)
+
+    # Keep merge-plot artifacts directly in the requested destination.
+    generated_plots = destination / "plots"
+    for generated in generated_plots.iterdir():
+        generated.replace(destination / generated.name)
+    generated_plots.rmdir()
+
+    # Replace the basic demo-only key with a source-aware key.
+    trial_labels = [f"T{i+1:02d}" for i in range(len(data))]
+    key = data[["source_label", "source_output_dir", "demo"]].copy()
+    key.insert(0, "trial_label", trial_labels)
+    key.to_csv(destination / "trial_key.csv", index=False)
+
+    print(f"Merged {len(data)} trials from {len(output_dirs)} output directories")
+    print(f"Saved merged summary: {merged_summary}")
+    print(f"Saved merged plots: {destination}")

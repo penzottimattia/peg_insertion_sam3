@@ -119,8 +119,6 @@ cp config.example.yaml config.yaml
 
 Set:
 
-- `dataset_path`
-- `output_dir`
 - both camera serials
 - text prompts for peg, holder, and hand
 - at least one physical peg dimension
@@ -137,30 +135,36 @@ At frame `0`, OpenCV `minAreaRect` is fitted to the peg mask. The longer rectang
 
 `config.yaml` is intentionally excluded from the distributable archive because it commonly contains machine-specific paths and camera serial numbers.
 
+## Dataset and output paths
+
+The dataset path is a CLI argument and is not read from `config.yaml`. All dataset-based commands require `--dataset-path`. Use `--output-dir` to choose the output location. If it is omitted, the output directory is created next to the dataset and uses the dataset filename without its extension.
+
+For example, `/data/session_01.h5` defaults to `/data/session_01/`.
+
 ## Commands
 
 Inspect the dataset and verify that every complete demonstration has exactly one timestamp gap per camera:
 
 ```bash
-peg-analysis -c config.yaml inspect
+peg-analysis -c config.yaml inspect --dataset-path /path/to/dataset.h5
 ```
 
 Run segmentation, tracking, geometry extraction, and CSV export:
 
 ```bash
-peg-analysis -c config.yaml analyze
+peg-analysis -c config.yaml analyze --dataset-path /path/to/dataset.h5
 ```
 
 Quickly test all six object prompts on `t0` frames without propagating masks through the videos:
 
 ```bash
-peg-analysis -c config.yaml check-prompts
+peg-analysis -c config.yaml check-prompts --dataset-path /path/to/dataset.h5
 ```
 
 By default, this checks the first complete demonstration. Sample more demonstrations with:
 
 ```bash
-peg-analysis -c config.yaml check-prompts --max-demos 5
+peg-analysis -c config.yaml check-prompts --dataset-path /path/to/dataset.h5 --max-demos 5
 ```
 
 The command writes side-by-side mask overlays and a machine-readable report to `<output_dir>/prompt_check/`. Review these results before running the full analysis. A returned match only means that SAM 3 found an object, so visually confirm that each mask covers the intended peg, holder, or hand.

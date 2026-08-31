@@ -1,8 +1,10 @@
 from pathlib import Path
 import json
+import warnings
 import numpy as np
-from .core import (axial_above_thumb_length, demos, detect_gap, feat, group,
-                   length_scale, peg_angle_deg, signed_point_axis_distance)
+from .core import (axial_above_thumb_length, demos, detect_gap, dimension_scale,
+                   feat, group, peg_angle_deg, robust_noise,
+                   signed_point_axis_distance)
 
 
 def selected_demos(h, requested_demo=None):
@@ -25,12 +27,22 @@ def load_saved_masks(output_dir, demo, role):
     return masks, json.loads(meta_path.read_text())
 
 
+def _median_pre(x, column, insertion_start, window):
+    return x.loc[x[column].notna() & (x.frame_index < insertion_start), column].tail(window).median()
+
+
+def _noise_fields(prefix, values):
+    n, std, mad = robust_noise(values)
+    return {f"pre_{prefix}_n": n, f"pre_{prefix}_std": std, f"pre_{prefix}_mad": mad}
+
+
 def analyze(c, requested_demo=None):
     import h5py
     import pandas as pd
     output_dir = Path(c["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
     summaries = []
+    pre_window = int(c["onset"]["pre_window_frames"])
     with h5py.File(c["dataset_path"], "r") as h:
         for demo in selected_demos(h, requested_demo):
             camera_frames = []
@@ -41,34 +53,42 @@ def analyze(c, requested_demo=None):
                 for name in ("peg", "hand", "holder"):
                     if name not in masks or len(masks[name]) != len(timestamps):
                         raise ValueError(f"Invalid saved masks for {demo}/{role}/{name}")
-                # Backward compatibility: new metadata stores the insertion start.
-                # For masks created by the original combined pipeline, recover it
-                # from the HDF5 timestamps without rerunning SAM.
                 if "insertion_start_frame" in meta:
-                    t0 = int(meta["insertion_start_frame"])
+                    insertion_start = int(meta["insertion_start_frame"])
+                    pre_gap_frame = int(meta.get("pre_gap_frame", insertion_start - 1))
                 else:
-                    _, t0, _ = detect_gap(
-                        timestamps,
-                        c["onset"]["gap_mad_multiplier"],
-                        c["onset"]["gap_nominal_multiplier"],
-                    )
+                    pre_gap_frame, insertion_start, _ = detect_gap(
+                        timestamps, c["onset"]["gap_mad_multiplier"],
+                        c["onset"]["gap_nominal_multiplier"])
                 peg_features = [feat(m) for m in masks["peg"]]
                 hand_features = [feat(m) for m in masks["hand"]]
                 if peg_features[0] is None:
                     raise RuntimeError(f"Invalid peg mask at scale frame 0: {demo}/{role}")
-                mm_per_px = length_scale(peg_features[0], c["dimensions"].get("peg_length_mm"))
+                if role == "main":
+                    mm_per_px = dimension_scale(
+                        peg_features[0], c["dimensions"].get("peg_length_mm"), "visible_length")
+                    scale_basis = "peg_length"
+                else:
+                    mm_per_px = dimension_scale(
+                        peg_features[0], c["dimensions"].get("peg_width_mm"), "visible_width")
+                    scale_basis = "peg_width"
+                if not np.isfinite(mm_per_px):
+                    warnings.warn(f"Missing {scale_basis} scale for {demo}/{role}; millimetre outputs will be missing")
                 rows = []
                 for i, timestamp in enumerate(timestamps):
                     peg, hand = peg_features[i], hand_features[i]
                     row = dict(role=role, frame_index=i, host_timestamp_ns=int(timestamp),
-                               elapsed_time_from_t0_s=(int(timestamp)-int(timestamps[t0]))/1e9,
-                               phase="pre" if i < t0 else "insertion", insertion_start_frame=t0,
+                               elapsed_time_from_insertion_start_s=(int(timestamp)-int(timestamps[insertion_start]))/1e9,
+                               phase="pre" if i < insertion_start else "insertion",
+                               pre_gap_frame=pre_gap_frame,
+                               insertion_start_frame=insertion_start,
                                peg_valid=peg is not None, hand_valid=hand is not None)
                     if peg is not None:
                         angle = peg_angle_deg(peg["axis"])
                         row.update(peg_center_x_px=peg["c"][0], peg_center_y_px=peg["c"][1],
                                    peg_axis_x=peg["axis"][0], peg_axis_y=peg["axis"][1],
                                    peg_visible_length_px=peg["visible_length"],
+                                   peg_visible_width_px=peg["visible_width"],
                                    peg_top_x_px=peg["endpoint_top"][0], peg_top_y_px=peg["endpoint_top"][1],
                                    peg_angle_deg=angle, peg_angular_error_deg=abs(angle))
                     if hand is not None:
@@ -79,48 +99,52 @@ def analyze(c, requested_demo=None):
                             row["peg_above_thumb_length_px"] = axial_above_thumb_length(peg, hand)
                     rows.append(row)
                 x = pd.DataFrame(rows)
-                pre_lengths = x.loc[x.peg_valid & (x.frame_index < t0), "peg_visible_length_px"].tail(int(c["onset"]["pre_window_frames"]))
-                if pre_lengths.empty:
+                baseline_length = _median_pre(x, "peg_visible_length_px", insertion_start, pre_window)
+                if not np.isfinite(baseline_length):
                     raise RuntimeError(f"No valid pre-insertion peg lengths: {demo}/{role}")
-                baseline_length = float(pre_lengths.median())
                 if role == "main":
                     x["insertion_depth_valid"] = x.peg_valid
-                    x["axial_slip_valid"] = x.peg_valid & x.hand_valid & x["peg_above_thumb_length_px"].notna()
                     x["insertion_depth_px"] = baseline_length - x["peg_visible_length_px"]
                     x["insertion_depth_mm"] = x.insertion_depth_px * mm_per_px
-                    axial0 = x.loc[x.frame_index == t0, "peg_above_thumb_length_px"].iloc[0]
+                    axial0 = _median_pre(x, "peg_above_thumb_length_px", insertion_start, pre_window)
+                    if not np.isfinite(axial0):
+                        warnings.warn(f"No valid pre-insertion axial baseline for {demo}; axial-slip output will be missing")
+                    x["axial_slip_valid"] = x.peg_valid & x.hand_valid & x["peg_above_thumb_length_px"].notna() & np.isfinite(axial0)
                     x["axial_slip_px"] = x.peg_above_thumb_length_px - axial0
                     x["axial_slip_mm"] = x.axial_slip_px * mm_per_px
                 else:
-                    x["lateral_slip_valid"] = x.peg_valid & x.hand_valid & x["thumb_peg_signed_distance_px"].notna()
-                    lateral0 = x.loc[x.frame_index == t0, "thumb_peg_signed_distance_px"].iloc[0]
-                    x["lateral_slip_signed_px"] = x.thumb_peg_signed_distance_px - lateral0
-                    x["lateral_slip_away_px"] = x.thumb_peg_signed_distance_px.abs() - abs(lateral0)
-                    x["lateral_slip_signed_mm"] = x.lateral_slip_signed_px * mm_per_px
-                    x["lateral_slip_away_mm"] = x.lateral_slip_away_px * mm_per_px
+                    lateral0 = _median_pre(x, "thumb_peg_signed_distance_px", insertion_start, pre_window)
+                    if not np.isfinite(lateral0):
+                        warnings.warn(f"No valid pre-insertion lateral baseline for {demo}; lateral-slip output will be missing")
+                    x["lateral_slip_valid"] = x.peg_valid & x.hand_valid & x["thumb_peg_signed_distance_px"].notna() & np.isfinite(lateral0)
+                    x["lateral_slip_px"] = x.thumb_peg_signed_distance_px - lateral0
+                    x["lateral_slip_mm"] = x.lateral_slip_px * mm_per_px
                 x["mm_per_px"] = mm_per_px
+                x["scale_basis"] = scale_basis
                 x["visible_length_baseline_px"] = baseline_length
                 camera_frames.append(x)
             combined = pd.concat(camera_frames, ignore_index=True)
             combined.to_csv(output_dir / f"{demo}_timeseries.csv", index=False)
             main = combined[combined.role == "main"].copy()
             secondary = combined[combined.role == "secondary"].copy()
-            depth_valid = main[main.insertion_depth_valid & main.insertion_depth_mm.notna()]
+            main_insert = main[main.phase == "insertion"]
+            secondary_insert = secondary[secondary.phase == "insertion"]
+            depth_valid = main_insert[main_insert.insertion_depth_valid & main_insert.insertion_depth_mm.notna()]
             if depth_valid.empty:
-                raise RuntimeError(f"No valid main-camera depth metrics: {demo}")
+                raise RuntimeError(f"No valid main-camera insertion-phase depth metrics: {demo}")
             max_depth_idx = depth_valid.insertion_depth_mm.idxmax()
             initial = main.loc[main.frame_index == int(main.insertion_start_frame.iloc[0])].iloc[0]
             final = main.loc[max_depth_idx]
-            axial = main.loc[main.axial_slip_valid, "axial_slip_mm"].dropna()
-            lateral = secondary.loc[secondary.lateral_slip_valid, "lateral_slip_away_mm"].dropna()
-            summaries.append(dict(
+            axial = main_insert.loc[main_insert.axial_slip_valid, "axial_slip_mm"].dropna()
+            lateral = secondary_insert.loc[secondary_insert.lateral_slip_valid, "lateral_slip_mm"].dropna()
+            summary = dict(
                 demo=demo,
                 max_insertion_depth_mm=float(final.insertion_depth_mm),
                 max_depth_frame=int(final.frame_index),
                 max_axial_slip_mm=float(axial.max()) if len(axial) else np.nan,
                 min_axial_slip_mm=float(axial.min()) if len(axial) else np.nan,
                 max_abs_axial_slip_mm=float(axial.abs().max()) if len(axial) else np.nan,
-                max_lateral_slip_away_mm=float(lateral.max()) if len(lateral) else np.nan,
+                max_abs_lateral_slip_mm=float(lateral.abs().max()) if len(lateral) else np.nan,
                 initial_angle_deg=float(initial.peg_angle_deg),
                 initial_angular_error_deg=float(initial.peg_angular_error_deg),
                 final_angle_deg=float(final.peg_angle_deg),
@@ -128,7 +152,17 @@ def analyze(c, requested_demo=None):
                 angular_error_change_deg=float(final.peg_angular_error_deg-initial.peg_angular_error_deg),
                 main_valid_frame_fraction=float(main.peg_valid.mean()),
                 secondary_valid_frame_fraction=float((secondary.peg_valid & secondary.hand_valid).mean()),
-            ))
+            )
+            pre_main = main[main.phase == "pre"]
+            pre_secondary = secondary[secondary.phase == "pre"]
+            summary.update(_noise_fields("insertion_depth_mm", pre_main.insertion_depth_mm))
+            summary.update(_noise_fields("axial_slip_mm", pre_main.axial_slip_mm))
+            summary.update(_noise_fields("lateral_slip_mm", pre_secondary.lateral_slip_mm))
+            summary.update(_noise_fields("angular_error_deg", pre_main.peg_angular_error_deg))
+            summary.update(_noise_fields("peg_angle_deg", pre_main.peg_angle_deg))
+            summary.update(_noise_fields("visible_length_px", pre_main.peg_visible_length_px))
+            summary.update(_noise_fields("visible_width_px", pre_secondary.peg_visible_width_px))
+            summaries.append(summary)
     summary_path = output_dir / (f"summary_{requested_demo}.csv" if requested_demo else "summary.csv")
     pd.DataFrame(summaries).to_csv(summary_path, index=False)
     print(f"Saved metrics: {summary_path}")

@@ -1,23 +1,67 @@
 import argparse
+from pathlib import Path
 from .core import config
+
+
+def _add_dataset_io(parser):
+    parser.add_argument(
+        '--dataset-path', required=True,
+        help='Input HDF5 dataset. This value is not read from config.yaml.',
+    )
+    parser.add_argument(
+        '--output-dir',
+        help='Analysis output directory. Defaults to a directory named after the dataset, next to it.',
+    )
+
+
+def _load_config(args):
+    return config(args.config, dataset_path=args.dataset_path, output_dir=args.output_dir)
 
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('-c', '--config', default='config.yaml')
+    p.add_argument('-c', '--config', default='config.yaml',
+                   help='YAML containing camera, SAM, dimension, onset, and visualization settings')
     sub = p.add_subparsers(dest='command', required=True)
-    sub.add_parser('inspect')
+
+    inspect = sub.add_parser('inspect')
+    _add_dataset_io(inspect)
+
     check = sub.add_parser('check-prompts')
+    _add_dataset_io(check)
     check.add_argument('--max-demos', type=int, default=1)
+
     seg = sub.add_parser('segment', help='Run SAM and save masks')
+    _add_dataset_io(seg)
     seg.add_argument('--demo')
     seg.add_argument('--overwrite', action='store_true')
+
     ana = sub.add_parser('analyze', help='Compute metrics from saved masks')
+    _add_dataset_io(ana)
     ana.add_argument('--demo')
+
     plot = sub.add_parser('plot', help='Create figures from a summary CSV')
-    plot.add_argument('--summary', help='Optional summary CSV; defaults to <output_dir>/summary.csv')
+    _add_dataset_io(plot)
+    plot.add_argument('--summary', help='Optional summary CSV; defaults to <output-dir>/summary.csv')
+
+    merge = sub.add_parser(
+        'merge-plot',
+        help='Merge and plot summary.csv files from multiple output directories; no config or dataset required',
+    )
+    merge.add_argument('output_dirs', nargs='+', help='Analysis output directories containing summary.csv')
+    merge.add_argument('-o', '--output-dir', default='merged_plots',
+                       help='Destination directory (default: ./merged_plots)')
+
     a = p.parse_args()
-    c = config(a.config)
+
+    if a.command == 'merge-plot':
+        if len(a.output_dirs) < 2:
+            merge.error('provide at least two output directories')
+        from .plots import merge_plots
+        merge_plots(a.output_dirs, a.output_dir)
+        return
+
+    c = _load_config(a)
     if a.command == 'inspect':
         import h5py
         from .core import demos, group, detect_gap
@@ -26,7 +70,9 @@ def main():
                 print(d)
                 for role, serial in [('main', c['main_camera_serial']), ('secondary', c['secondary_camera_serial'])]:
                     g = group(h, d, serial)
-                    print(role, len(g['rgb']), detect_gap(g['host_timestamp_ns'][:], c['onset']['gap_mad_multiplier'], c['onset']['gap_nominal_multiplier']))
+                    print(role, len(g['rgb']), detect_gap(
+                        g['host_timestamp_ns'][:], c['onset']['gap_mad_multiplier'],
+                        c['onset']['gap_nominal_multiplier']))
     elif a.command == 'check-prompts':
         if a.max_demos < 1:
             p.error('--max-demos must be at least 1')
