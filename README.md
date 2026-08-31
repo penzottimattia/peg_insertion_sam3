@@ -169,7 +169,17 @@ peg-analysis -c config.yaml check-prompts --dataset-path /path/to/dataset.h5 --m
 
 The command writes side-by-side mask overlays and a machine-readable report to `<output_dir>/prompt_check/`. Review these results before running the full analysis. A returned match only means that SAM 3 found an object, so visually confirm that each mask covers the intended peg, holder, or hand.
 
-The CLI supports `inspect`, `check-prompts`, and `analyze`.
+Merge summaries and optionally plot only the trials with the greatest maximum insertion depth:
+
+```bash
+peg-analysis merge-plot run_a run_b --nmax-trials 10
+```
+
+`merged_summary.csv` always retains every trial. `plotted_summary.csv`, the figures, and `trial_key.csv` contain only the selected trials when `--nmax-trials` is used.
+
+The depth, axial-slip, and lateral-slip outcome panels use the same y-axis range for direct visual comparison.
+
+The CLI supports `inspect`, `check-prompts`, `segment`, `analyze`, `plot`, and `merge-plot`.
 
 ## Metrics
 

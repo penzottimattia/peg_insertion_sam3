@@ -51,14 +51,20 @@ def main():
     merge.add_argument('output_dirs', nargs='+', help='Analysis output directories containing summary.csv')
     merge.add_argument('-o', '--output-dir', default='merged_plots',
                        help='Destination directory (default: ./merged_plots)')
+    merge.add_argument(
+        '--nmax-trials', type=int,
+        help='Plot only the N trials with the greatest maximum insertion depth',
+    )
 
     a = p.parse_args()
 
     if a.command == 'merge-plot':
         if len(a.output_dirs) < 2:
             merge.error('provide at least two output directories')
+        if a.nmax_trials is not None and a.nmax_trials < 1:
+            merge.error('--nmax-trials must be at least 1')
         from .plots import merge_plots
-        merge_plots(a.output_dirs, a.output_dir)
+        merge_plots(a.output_dirs, a.output_dir, a.nmax_trials)
         return
 
     c = _load_config(a)

@@ -104,6 +104,14 @@ def make_plots(c, summary_path=None):
         axes[2], data[lateral_column], "Lateral",
         lateral_ylabel, trial_labels, colors,
     )
+
+    # Apply the union of the automatically calculated limits to every outcome
+    # panel, including the space required by error bars and plot padding.
+    shared_ymin = min(ax.get_ylim()[0] for ax in axes)
+    shared_ymax = max(ax.get_ylim()[1] for ax in axes)
+    for ax in axes:
+        ax.set_ylim(shared_ymin, shared_ymax)
+
     fig.tight_layout()
     fig.savefig(plots_dir / "outcome_distributions.png", dpi=200, bbox_inches="tight")
     plt.close(fig)
@@ -131,7 +139,7 @@ def make_plots(c, summary_path=None):
     print(f"Saved plots: {plots_dir}")
 
 
-def merge_plots(output_dirs, destination="merged_plots"):
+def merge_plots(output_dirs, destination="merged_plots", nmax_trials=None):
     """Merge summary.csv files from multiple analysis output directories and plot them."""
     import pandas as pd
 
@@ -150,13 +158,26 @@ def merge_plots(output_dirs, destination="merged_plots"):
         frames.append(frame)
 
     data = pd.concat(frames, ignore_index=True, sort=False)
+    if nmax_trials is not None and nmax_trials < 1:
+        raise ValueError("nmax_trials must be at least 1")
+    if "max_insertion_depth_mm" not in data.columns:
+        raise ValueError("Summary CSV is missing max_insertion_depth_mm")
+
     destination = Path(destination).expanduser().resolve()
     destination.mkdir(parents=True, exist_ok=True)
     merged_summary = destination / "merged_summary.csv"
     data.to_csv(merged_summary, index=False)
 
+    if nmax_trials is None or nmax_trials >= len(data):
+        plotted_data = data.copy()
+    else:
+        selected_indices = data["max_insertion_depth_mm"].nlargest(nmax_trials).index
+        plotted_data = data.loc[data.index.isin(selected_indices)].copy()
+    plotted_summary = destination / "plotted_summary.csv"
+    plotted_data.to_csv(plotted_summary, index=False)
+
     plot_config = {"output_dir": str(destination)}
-    make_plots(plot_config, merged_summary)
+    make_plots(plot_config, plotted_summary)
 
     # Keep merge-plot artifacts directly in the requested destination.
     generated_plots = destination / "plots"
@@ -165,11 +186,13 @@ def merge_plots(output_dirs, destination="merged_plots"):
     generated_plots.rmdir()
 
     # Replace the basic demo-only key with a source-aware key.
-    trial_labels = [f"T{i+1:02d}" for i in range(len(data))]
-    key = data[["source_label", "source_output_dir", "demo"]].copy()
+    trial_labels = [f"T{i+1:02d}" for i in range(len(plotted_data))]
+    key = plotted_data[["source_label", "source_output_dir", "demo"]].copy()
     key.insert(0, "trial_label", trial_labels)
     key.to_csv(destination / "trial_key.csv", index=False)
 
     print(f"Merged {len(data)} trials from {len(output_dirs)} output directories")
+    print(f"Plotted {len(plotted_data)} trials with the greatest maximum insertion depth")
     print(f"Saved merged summary: {merged_summary}")
+    print(f"Saved plotted summary: {plotted_summary}")
     print(f"Saved merged plots: {destination}")
