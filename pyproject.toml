@@ -1,0 +1,12 @@
+[build-system]
+requires=["setuptools>=68","wheel"]
+build-backend="setuptools.build_meta"
+[project]
+name="peg-insertion-sam3"
+version="0.5.0"
+requires-python=">=3.12"
+dependencies=["h5py","numpy==1.26.*","opencv-python","pandas","PyYAML","matplotlib","scipy","pillow"]
+[project.scripts]
+peg-analysis="peg_analysis.cli:main"
+[tool.setuptools.packages.find]
+include=["peg_analysis*"]

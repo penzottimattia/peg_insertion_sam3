@@ -1,0 +1,7 @@
+# SAM 3 still imports pkg_resources, removed from Setuptools 82.
+# 80.9.0 retains pkg_resources and avoids allowing an incompatible upgrade.
+setuptools==80.9.0
+numpy>=1.26,<2
+einops>=0.8,<1
+psutil>=5.9
+pycocotools>=2.0.7

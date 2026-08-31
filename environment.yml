@@ -1,0 +1,23 @@
+name: peg-sam3
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - setuptools=80.9.0
+  - numpy=1.26
+  - scipy
+  - pandas
+  - h5py
+  - matplotlib
+  - opencv
+  - pyyaml
+  - tqdm
+  - pytest
+  - pillow
+  - psutil
+  - pycocotools
+  - einops
+  - pip:
+      - -c constraints.txt
+      - -e .

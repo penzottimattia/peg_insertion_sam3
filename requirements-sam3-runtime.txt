@@ -1,0 +1,5 @@
+# Runtime packages used by SAM 3 but missing from some base package metadata.
+-c constraints.txt
+einops>=0.8,<1
+psutil>=5.9
+pycocotools>=2.0.7

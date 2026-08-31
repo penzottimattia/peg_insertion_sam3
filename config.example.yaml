@@ -1,0 +1,50 @@
+dataset_path: /absolute/path/to/dataset.h5
+output_dir: ./peg_analysis_output
+main_camera_serial: "ENTER_MAIN_SERIAL"
+secondary_camera_serial: "ENTER_SECONDARY_SERIAL"
+
+sam3:
+  gpus: [0]
+  checkpoint_path: null
+  bpe_path: null
+  output_probability_threshold: 0.45
+  offload_video_to_cpu: true
+  offload_state_to_cpu: true
+  jpeg_quality: 95
+
+text_prompts:
+  main:
+    peg: "the insertion peg"
+    holder: "the peg holder"
+    hand: "the hand holding the peg"
+  secondary:
+    peg: "the insertion peg"
+    holder: "the peg holder"
+    hand: "the hand holding the peg"
+
+instance_selection:
+  # With no clicked opening, peg and holder default to the largest matching instance.
+  peg: largest
+  holder: largest
+  hand: largest
+
+dimensions:
+  # Enter at least one peg dimension. The scale is estimated independently per camera
+  # from the peg minimum-area rectangle in frame 0, where the full peg is visible.
+  peg_length_mm: null
+  peg_width_mm: null
+
+onset:
+  pre_window_frames: 5
+  gap_mad_multiplier: 8.0
+  gap_nominal_multiplier: 3.0
+
+tracking:
+  min_mask_area_px: 20
+  # Holder origin can remain fixed at t0 because holder and cameras are fixed.
+  holder_origin: fixed_t0
+
+visualization:
+  keyframes: 12
+  density_bins: 180
+  density_sigma: 2.0
