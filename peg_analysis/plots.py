@@ -13,10 +13,22 @@ def _mean_ci95(values):
     return mean, half
 
 
-def _distribution(ax, values, label, ylabel, trial_labels, colors):
+def _distribution(
+    ax, values, label, ylabel, trial_labels, colors, below_insertion_depth_threshold=None
+):
     values = np.asarray(values, dtype=float)
     valid = np.isfinite(values)
     clean = values[valid]
+    if below_insertion_depth_threshold is None:
+        below_insertion_depth_threshold = np.zeros(len(values), dtype=bool)
+    else:
+        below_insertion_depth_threshold = np.asarray(
+            below_insertion_depth_threshold, dtype=bool
+        )
+        if len(below_insertion_depth_threshold) != len(values):
+            raise ValueError(
+                "below_insertion_depth_threshold must match values length"
+            )
     mean, ci = _mean_ci95(clean)
     ax.bar(
         [0], [mean], width=0.45, color="0.85", edgecolor="0.35",
@@ -33,8 +45,16 @@ def _distribution(ax, values, label, ylabel, trial_labels, colors):
         for offset, index in zip(offsets, valid_indices):
             color = colors[index]
             value = values[index]
-            ax.scatter([offset], [value], color=color, edgecolor="white", linewidth=0.5,
-                       s=42, zorder=3)
+            if below_insertion_depth_threshold[index]:
+                ax.scatter(
+                    [offset], [value], marker="x", color=color,
+                    s=72, linewidths=2.0, zorder=5,
+                )
+            else:
+                ax.scatter(
+                    [offset], [value], marker="o", color=color,
+                    edgecolor="white", linewidth=0.5, s=42, zorder=3,
+                )
             # Alternate vertical displacement to reduce collisions while keeping
             # labels close to their corresponding points.
             direction = 1 if index % 2 == 0 else -1
@@ -70,7 +90,7 @@ def _lateral_summary_column(data):
     )
 
 
-def make_plots(c, summary_path=None):
+def make_plots(c, summary_path=None, insertion_depth_threshold=None):
     import matplotlib.pyplot as plt
     import pandas as pd
     output_dir = Path(c["output_dir"])
@@ -91,18 +111,29 @@ def make_plots(c, summary_path=None):
     trial_key.insert(0, "trial_label", trial_labels)
     trial_key.to_csv(plots_dir / "trial_key.csv", index=False)
 
+    if insertion_depth_threshold is None:
+        below_insertion_depth_threshold = np.zeros(len(data), dtype=bool)
+    else:
+        below_insertion_depth_threshold = (
+            data.max_insertion_depth_mm.to_numpy(dtype=float)
+            < float(insertion_depth_threshold)
+        )
+
     fig, axes = plt.subplots(1, 3, figsize=(11.5, 4.2))
     _distribution(
         axes[0], data.max_insertion_depth_mm, "Depth",
         "Maximum insertion depth (mm)", trial_labels, colors,
+        below_insertion_depth_threshold,
     )
     _distribution(
         axes[1], data.max_abs_axial_slip_mm, "Axial",
         "Maximum absolute slip (mm)", trial_labels, colors,
+        below_insertion_depth_threshold,
     )
     _distribution(
         axes[2], data[lateral_column], "Lateral",
         lateral_ylabel, trial_labels, colors,
+        below_insertion_depth_threshold,
     )
 
     # Apply the union of the automatically calculated limits to every outcome
@@ -117,9 +148,20 @@ def make_plots(c, summary_path=None):
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(6, 4))
-    for _, row in data.iterrows():
+    for index, (_, row) in enumerate(data.iterrows()):
         ax.plot([0, 1], [row.initial_angular_error_deg, row.final_angular_error_deg], color="0.7", linewidth=1)
-        ax.scatter([0, 1], [row.initial_angular_error_deg, row.final_angular_error_deg], color="black", s=24, zorder=3)
+        if below_insertion_depth_threshold[index]:
+            ax.scatter(
+                [0, 1],
+                [row.initial_angular_error_deg, row.final_angular_error_deg],
+                marker="x", color="black", s=58, linewidths=1.8, zorder=5,
+            )
+        else:
+            ax.scatter(
+                [0, 1],
+                [row.initial_angular_error_deg, row.final_angular_error_deg],
+                marker="o", color="black", s=24, zorder=3,
+            )
     for x, col in enumerate(["initial_angular_error_deg", "final_angular_error_deg"]):
         mean, ci = _mean_ci95(data[col])
         ax.errorbar(x, mean, yerr=ci, fmt="o", color="tab:red", capsize=6, markersize=7, zorder=4)
@@ -130,7 +172,17 @@ def make_plots(c, summary_path=None):
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(6, 4))
-    ax.scatter(data.initial_angular_error_deg, data.max_insertion_depth_mm, color="black")
+    for index, (_, row) in enumerate(data.iterrows()):
+        if below_insertion_depth_threshold[index]:
+            ax.scatter(
+                [row.initial_angular_error_deg], [row.max_insertion_depth_mm],
+                marker="x", color="black", s=58, linewidths=1.8, zorder=5,
+            )
+        else:
+            ax.scatter(
+                [row.initial_angular_error_deg], [row.max_insertion_depth_mm],
+                marker="o", color="black", s=36, zorder=3,
+            )
     ax.set_xlabel("Initial angular error (deg)")
     ax.set_ylabel("Maximum insertion depth (mm)")
     fig.tight_layout()
@@ -139,7 +191,10 @@ def make_plots(c, summary_path=None):
     print(f"Saved plots: {plots_dir}")
 
 
-def merge_plots(output_dirs, destination="merged_plots", nmax_trials=None):
+def merge_plots(
+    output_dirs, destination="merged_plots", nmax_trials=None,
+    insertion_depth_threshold=None,
+):
     """Merge summary.csv files from multiple analysis output directories and plot them."""
     import pandas as pd
 
@@ -177,7 +232,10 @@ def merge_plots(output_dirs, destination="merged_plots", nmax_trials=None):
     plotted_data.to_csv(plotted_summary, index=False)
 
     plot_config = {"output_dir": str(destination)}
-    make_plots(plot_config, plotted_summary)
+    make_plots(
+        plot_config, plotted_summary,
+        insertion_depth_threshold=insertion_depth_threshold,
+    )
 
     # Keep merge-plot artifacts directly in the requested destination.
     generated_plots = destination / "plots"

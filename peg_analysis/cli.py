@@ -86,6 +86,10 @@ def main():
     plot = sub.add_parser('plot', help='Create figures from a summary CSV')
     _add_input_dir(plot, 'Analysis directory containing summary.csv')
     plot.add_argument('--summary', help='Optional summary CSV; defaults to <input-dir>/summary.csv')
+    plot.add_argument(
+        '--insertion-depth-threshold', type=float,
+        help='Draw trials below this maximum insertion depth (mm) with x markers',
+    )
 
     merge = sub.add_parser(
         'merge-plot',
@@ -97,6 +101,10 @@ def main():
     merge.add_argument(
         '--nmax-trials', type=int,
         help='Plot only the N trials with the greatest maximum insertion depth',
+    )
+    merge.add_argument(
+        '--insertion-depth-threshold', type=float,
+        help='Draw trials below this maximum insertion depth (mm) with x markers',
     )
 
     gap = sub.add_parser(
@@ -151,7 +159,10 @@ def main():
         if a.nmax_trials is not None and a.nmax_trials < 1:
             merge.error('--nmax-trials must be at least 1')
         from .plots import merge_plots
-        merge_plots(a.output_dirs, a.output_dir, a.nmax_trials)
+        merge_plots(
+            a.output_dirs, a.output_dir, a.nmax_trials,
+            insertion_depth_threshold=a.insertion_depth_threshold,
+        )
         return
 
     if a.command == 'analyze':
@@ -185,4 +196,7 @@ def main():
         analyze(c, a.demo)
     else:
         from .plots import make_plots
-        make_plots(c, a.summary)
+        make_plots(
+            c, a.summary,
+            insertion_depth_threshold=a.insertion_depth_threshold,
+        )

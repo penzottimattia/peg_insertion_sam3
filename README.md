@@ -167,6 +167,12 @@ Create figures from the generated summary:
 peg-analysis plot --input-dir /path/to/dataset
 ```
 
+Draw trials below an insertion depth threshold with `x` markers instead of circles:
+
+```bash
+peg-analysis plot --input-dir /path/to/dataset --insertion-depth-threshold 20
+```
+
 Analysis treats malformed demonstrations as demo-local failures. It emits a warning, records the failure in `skipped_demos.csv`, and continues with later demonstrations.
 
 Quickly test all six object prompts on `t0` frames without propagating masks through the videos:
@@ -187,6 +193,12 @@ Merge summaries and optionally plot only the trials with the greatest maximum in
 
 ```bash
 peg-analysis merge-plot run_a run_b --nmax-trials 10
+```
+
+The same insertion depth threshold can be applied to merged plots:
+
+```bash
+peg-analysis merge-plot run_a run_b --insertion-depth-threshold 20
 ```
 
 `merged_summary.csv` always retains every trial. `plotted_summary.csv`, the figures, and `trial_key.csv` contain only the selected trials when `--nmax-trials` is used.

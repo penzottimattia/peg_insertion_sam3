@@ -96,3 +96,43 @@ def test_outcome_panels_use_same_y_scale(tmp_path, monkeypatch):
     make_plots({"output_dir": str(output_dir)}, summary)
     assert len(saved_limits) >= 3
     assert saved_limits[-3] == saved_limits[-2] == saved_limits[-1]
+
+
+def test_distribution_uses_x_below_insertion_depth_threshold():
+    import matplotlib.pyplot as plt
+    from peg_analysis.plots import _distribution
+
+    fig, ax = plt.subplots()
+    _distribution(
+        ax, [5.0, 15.0], "Depth", "Depth (mm)", ["T01", "T02"],
+        ["red", "blue"], [True, False],
+    )
+    trial_markers = ax.collections[-2:]
+    x_path = trial_markers[0].get_paths()[0]
+    circle_path = trial_markers[1].get_paths()[0]
+    assert len(x_path.vertices) < len(circle_path.vertices)
+    assert trial_markers[0].get_linewidths()[0] == 2.0
+    plt.close(fig)
+
+
+def test_make_plots_accepts_insertion_depth_threshold(tmp_path):
+    import pandas as pd
+    from peg_analysis.plots import make_plots
+
+    output_dir = tmp_path / "results"
+    output_dir.mkdir()
+    summary = output_dir / "summary.csv"
+    pd.DataFrame({
+        "demo": ["demo_000000", "demo_000001"],
+        "max_insertion_depth_mm": [10.0, 30.0],
+        "max_abs_axial_slip_mm": [2.0, 3.0],
+        "max_abs_lateral_slip_mm": [1.0, 1.5],
+        "initial_angular_error_deg": [2.0, 1.0],
+        "final_angular_error_deg": [1.0, 0.5],
+    }).to_csv(summary, index=False)
+
+    make_plots(
+        {"output_dir": str(output_dir)}, summary,
+        insertion_depth_threshold=20.0,
+    )
+    assert (output_dir / "plots" / "outcome_distributions.png").is_file()
