@@ -36,7 +36,7 @@ def _noise_fields(prefix, values):
     return {f"pre_{prefix}_n": n, f"pre_{prefix}_std": std, f"pre_{prefix}_mad": mad}
 
 
-def analyze(c, requested_demo=None):
+def _analyze_impl(c, requested_demo=None):
     import h5py
     import pandas as pd
     output_dir = Path(c["output_dir"])
@@ -166,3 +166,53 @@ def analyze(c, requested_demo=None):
     summary_path = output_dir / (f"summary_{requested_demo}.csv" if requested_demo else "summary.csv")
     pd.DataFrame(summaries).to_csv(summary_path, index=False)
     print(f"Saved metrics: {summary_path}")
+
+def analyze(c, requested_demo=None):
+    """Analyze demos independently, warning and continuing after demo-local failures."""
+    import h5py
+    import pandas as pd
+
+    output_dir = Path(c["output_dir"])
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    with h5py.File(c["dataset_path"], "r") as h:
+        requested = selected_demos(h, requested_demo)
+
+    summaries = []
+    skipped = []
+    for demo in requested:
+        try:
+            _analyze_impl(c, demo)
+            demo_summary_path = output_dir / f"summary_{demo}.csv"
+            summaries.append(pd.read_csv(demo_summary_path))
+        except Exception as exc:
+            warnings.warn(
+                f"Skipping {demo}: {exc}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            skipped.append({
+                "demo": demo,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            })
+
+    summary_path = output_dir / (
+        f"summary_{requested_demo}.csv" if requested_demo else "summary.csv"
+    )
+    if summaries:
+        pd.concat(summaries, ignore_index=True).to_csv(summary_path, index=False)
+    else:
+        pd.DataFrame().to_csv(summary_path, index=False)
+
+    skipped_path = output_dir / "skipped_demos.csv"
+    if skipped:
+        pd.DataFrame(skipped).to_csv(skipped_path, index=False)
+        print(f"Warning: skipped {len(skipped)} demo(s)")
+        print(f"Saved skipped-demo report: {skipped_path}")
+    elif skipped_path.exists() and requested_demo is None:
+        skipped_path.unlink()
+
+    print(f"Analyzed {len(summaries)} demo(s)")
+    print(f"Saved metrics: {summary_path}")
+

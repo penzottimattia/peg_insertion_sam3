@@ -137,7 +137,7 @@ At frame `0`, OpenCV `minAreaRect` is fitted to the peg mask. The longer rectang
 
 ## Dataset and output paths
 
-The dataset path is a CLI argument and is not read from `config.yaml`. All dataset-based commands require `--dataset-path`. Use `--output-dir` to choose the output location. If it is omitted, the output directory is created next to the dataset and uses the dataset filename without its extension.
+The dataset path is a CLI argument and is not read from `config.yaml`. Dataset-reading commands (`inspect`, `check-prompts`, and `segment`) require `--dataset-path`. Segmentation records the resolved dataset path in its mask metadata. Downstream commands (`analyze` and `plot`) consume the resulting analysis directory through `--input-dir`. Use `--output-dir` with dataset-reading commands to choose the output location. If it is omitted, the output directory is created next to the dataset and uses the dataset filename without its extension.
 
 For example, `/data/session_01.h5` defaults to `/data/session_01/`.
 
@@ -152,8 +152,22 @@ peg-analysis -c config.yaml inspect --dataset-path /path/to/dataset.h5
 Run segmentation, tracking, geometry extraction, and CSV export:
 
 ```bash
-peg-analysis -c config.yaml analyze --dataset-path /path/to/dataset.h5
+peg-analysis -c config.yaml analyze --input-dir /path/to/dataset
 ```
+
+For legacy outputs whose mask metadata predates `dataset_path`, migrate the existing metadata without rerunning SAM. Existing mask archives are reused and only their JSON metadata is updated:
+
+```bash
+peg-analysis -c config.yaml segment --dataset-path /path/to/dataset.h5
+```
+
+Create figures from the generated summary:
+
+```bash
+peg-analysis plot --input-dir /path/to/dataset
+```
+
+Analysis treats malformed demonstrations as demo-local failures. It emits a warning, records the failure in `skipped_demos.csv`, and continues with later demonstrations.
 
 Quickly test all six object prompts on `t0` frames without propagating masks through the videos:
 

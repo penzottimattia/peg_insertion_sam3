@@ -1,4 +1,5 @@
 import argparse
+import json
 from pathlib import Path
 from .core import config
 
@@ -16,6 +17,45 @@ def _add_dataset_io(parser):
 
 def _load_config(args):
     return config(args.config, dataset_path=args.dataset_path, output_dir=args.output_dir)
+
+
+def _add_input_dir(parser, help_text):
+    parser.add_argument('--input-dir', required=True, help=help_text)
+
+
+def _load_analysis_config(args):
+    input_dir = Path(args.input_dir).expanduser().resolve()
+    masks_dir = input_dir / "masks"
+    if not masks_dir.is_dir():
+        raise FileNotFoundError(f"Masks directory not found: {masks_dir}")
+
+    metadata_paths = sorted(masks_dir.glob("*_meta.json"))
+    if not metadata_paths:
+        raise FileNotFoundError(f"No mask metadata found in: {masks_dir}")
+
+    dataset_paths = set()
+    for metadata_path in metadata_paths:
+        metadata = json.loads(metadata_path.read_text())
+        dataset_path = metadata.get("dataset_path")
+        if dataset_path:
+            dataset_paths.add(str(Path(dataset_path).expanduser().resolve()))
+
+    if not dataset_paths:
+        raise ValueError(
+            "Mask metadata does not contain dataset_path. Run segment again without "
+            "--overwrite to repair existing metadata without rerunning SAM."
+        )
+    if len(dataset_paths) != 1:
+        raise ValueError(
+            "Input directory references multiple datasets: "
+            + ", ".join(sorted(dataset_paths))
+        )
+
+    return config(
+        args.config,
+        dataset_path=next(iter(dataset_paths)),
+        output_dir=input_dir,
+    )
 
 
 def main():
@@ -37,12 +77,15 @@ def main():
     seg.add_argument('--overwrite', action='store_true')
 
     ana = sub.add_parser('analyze', help='Compute metrics from saved masks')
-    _add_dataset_io(ana)
+    _add_input_dir(
+        ana,
+        'Analysis directory containing masks and segmentation metadata',
+    )
     ana.add_argument('--demo')
 
     plot = sub.add_parser('plot', help='Create figures from a summary CSV')
-    _add_dataset_io(plot)
-    plot.add_argument('--summary', help='Optional summary CSV; defaults to <output-dir>/summary.csv')
+    _add_input_dir(plot, 'Analysis directory containing summary.csv')
+    plot.add_argument('--summary', help='Optional summary CSV; defaults to <input-dir>/summary.csv')
 
     merge = sub.add_parser(
         'merge-plot',
@@ -67,7 +110,13 @@ def main():
         merge_plots(a.output_dirs, a.output_dir, a.nmax_trials)
         return
 
-    c = _load_config(a)
+    if a.command == 'analyze':
+        c = _load_analysis_config(a)
+    elif a.command == 'plot':
+        c = {'output_dir': str(Path(a.input_dir).expanduser().resolve())}
+    else:
+        c = _load_config(a)
+
     if a.command == 'inspect':
         import h5py
         from .core import demos, group, detect_gap
