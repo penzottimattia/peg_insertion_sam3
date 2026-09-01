@@ -91,6 +91,63 @@ def axial_above_thumb_length(peg, hand, eps=1e-6):
     return float(lam-peg["projection_min"])
 
 
+def lateral_thumb_lower_bbox_distance(peg_mask, hand_mask, min_lower_pixels=3):
+    """Measure distance from thumb-tip median to lower-peg bbox top-left.
+
+    The bottommost occupied hand row defines the thumb-tip row and the cutoff
+    for the lower peg. Hand pixels on that row are split into contiguous
+    segments. Segments are clipped to the full peg horizontal bounding box,
+    and the segment closest to the lower-peg bounding box is selected. The
+    reference point is the median x coordinate of that segment at the thumb
+    row. The peg reference is the top-left corner of the axis-aligned bounding
+    box of peg pixels strictly below the thumb row.
+    """
+    peg_mask = np.asarray(peg_mask, dtype=bool)
+    hand_mask = np.asarray(hand_mask, dtype=bool)
+    if peg_mask.shape != hand_mask.shape or peg_mask.ndim != 2:
+        raise ValueError("peg_mask and hand_mask must be same-shaped 2D arrays")
+
+    peg_y_all, peg_x_all = np.nonzero(peg_mask)
+    hand_y, _ = np.nonzero(hand_mask)
+    if not len(peg_x_all) or not len(hand_y):
+        return None
+
+    thumb_row = int(hand_y.max())
+    hand_x = np.flatnonzero(hand_mask[thumb_row])
+    if not len(hand_x):
+        return None
+
+    lower_y, lower_x = np.nonzero(peg_mask & (np.indices(peg_mask.shape)[0] > thumb_row))
+    if len(lower_x) < int(min_lower_pixels):
+        return None
+
+    corner = np.array([float(lower_x.min()), float(lower_y.min())])
+    peg_bbox_min = int(peg_x_all.min())
+    peg_bbox_max = int(peg_x_all.max())
+    segments = np.split(hand_x, np.flatnonzero(np.diff(hand_x) > 1) + 1)
+    eligible = []
+    for segment in segments:
+        clipped = segment[(segment >= peg_bbox_min) & (segment <= peg_bbox_max)]
+        if not len(clipped):
+            continue
+        thumb = np.array([float(np.median(clipped)), float(thumb_row)])
+        distance = float(np.linalg.norm(corner - thumb))
+        eligible.append((distance, -len(clipped), clipped, thumb))
+    if not eligible:
+        return None
+
+    distance, _, thumb_x, thumb = min(eligible, key=lambda item: (item[0], item[1]))
+    return {
+        "distance": distance,
+        "thumb_x": float(thumb[0]),
+        "thumb_y": float(thumb[1]),
+        "corner_x": float(corner[0]),
+        "corner_y": float(corner[1]),
+        "thumb_segment_min_x": int(thumb_x.min()),
+        "thumb_segment_max_x": int(thumb_x.max()),
+    }
+
+
 def signed_point_axis_distance(point, axis_origin, axis_normal):
     return float((np.asarray(point)-np.asarray(axis_origin)) @ np.asarray(axis_normal))
 

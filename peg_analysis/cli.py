@@ -99,7 +99,51 @@ def main():
         help='Plot only the N trials with the greatest maximum insertion depth',
     )
 
+    gap = sub.add_parser(
+        'insert-gap',
+        help='Manually insert a timestamp gap before a frame in one demo',
+    )
+    gap.add_argument('--dataset-path', required=True, help='Input HDF5 dataset')
+    gap.add_argument('--demo', required=True,
+                     help='Demo name or numeric index, for example demo_000002 or 2')
+    gap.add_argument('--frame', required=True, type=int,
+                     help='First frame after the inserted gap; must be at least 1')
+    gap.add_argument('--gap-ms', required=True, type=float,
+                     help='Positive duration to add to timestamps from --frame onward')
+    gap.add_argument('--camera-serial',
+                     help='Update one camera only; by default all cameras in the demo are updated')
+    destination = gap.add_mutually_exclusive_group()
+    destination.add_argument('-o', '--output-path',
+                             help='Output HDF5 path; defaults to <dataset>_with_gap.h5')
+    destination.add_argument('--in-place', action='store_true',
+                             help='Modify the source dataset instead of creating a copy')
+
     a = p.parse_args()
+
+    if a.command == 'insert-gap':
+        if a.gap_ms <= 0:
+            gap.error('--gap-ms must be greater than zero')
+        gap_ns = round(a.gap_ms * 1_000_000)
+        if gap_ns <= 0:
+            gap.error('--gap-ms is too small to represent in nanoseconds')
+        from .timestamp_gap import insert_timestamp_gap
+        output_path, results = insert_timestamp_gap(
+            a.dataset_path,
+            a.demo,
+            a.frame,
+            gap_ns,
+            output_path=a.output_path,
+            in_place=a.in_place,
+            camera_serial=a.camera_serial,
+        )
+        for result in results:
+            print(
+                f"Updated {result['demo']}/camera {result['camera_serial']}: "
+                f"added {result['added_gap_ns']} ns before frame {result['frame']} "
+                f"(resulting timestamp step {result['resulting_step_ns']} ns)"
+            )
+        print(f"Saved dataset: {output_path}")
+        return
 
     if a.command == 'merge-plot':
         if len(a.output_dirs) < 2:

@@ -3,8 +3,7 @@ import json
 import warnings
 import numpy as np
 from .core import (axial_above_thumb_length, demos, detect_gap, dimension_scale,
-                   feat, group, peg_angle_deg, robust_noise,
-                   signed_point_axis_distance)
+                   feat, group, lateral_thumb_lower_bbox_distance, peg_angle_deg, robust_noise)
 
 
 def selected_demos(h, requested_demo=None):
@@ -93,10 +92,17 @@ def _analyze_impl(c, requested_demo=None):
                                    peg_angle_deg=angle, peg_angular_error_deg=abs(angle))
                     if hand is not None:
                         row.update(thumb_tip_x_px=hand["thumb_tip"][0], thumb_tip_y_px=hand["thumb_tip"][1])
+                    if role == "secondary":
+                        row["thumb_lower_bbox_corner_distance_px"] = np.nan
                     if peg is not None and hand is not None:
-                        row["thumb_peg_signed_distance_px"] = signed_point_axis_distance(hand["thumb_tip"], peg["c"], peg["normal"])
                         if role == "main":
                             row["peg_above_thumb_length_px"] = axial_above_thumb_length(peg, hand)
+                        else:
+                            lateral = lateral_thumb_lower_bbox_distance(
+                                masks["peg"][i], masks["hand"][i]
+                            )
+                            if lateral is not None:
+                                row["thumb_lower_bbox_corner_distance_px"] = lateral["distance"]
                     rows.append(row)
                 x = pd.DataFrame(rows)
                 baseline_length = _median_pre(x, "peg_visible_length_px", insertion_start, pre_window)
@@ -113,18 +119,28 @@ def _analyze_impl(c, requested_demo=None):
                     x["axial_slip_px"] = x.peg_above_thumb_length_px - axial0
                     x["axial_slip_mm"] = x.axial_slip_px * mm_per_px
                 else:
-                    lateral0 = _median_pre(x, "thumb_peg_signed_distance_px", insertion_start, pre_window)
+                    lateral0 = _median_pre(x, "thumb_lower_bbox_corner_distance_px", insertion_start, pre_window)
                     if not np.isfinite(lateral0):
                         warnings.warn(f"No valid pre-insertion lateral baseline for {demo}; lateral-slip output will be missing")
-                    x["lateral_slip_valid"] = x.peg_valid & x.hand_valid & x["thumb_peg_signed_distance_px"].notna() & np.isfinite(lateral0)
-                    x["lateral_slip_px"] = x.thumb_peg_signed_distance_px - lateral0
+                    x["lateral_slip_valid"] = x.peg_valid & x.hand_valid & x["thumb_lower_bbox_corner_distance_px"].notna() & np.isfinite(lateral0)
+                    x["lateral_slip_px"] = x.thumb_lower_bbox_corner_distance_px - lateral0
                     x["lateral_slip_mm"] = x.lateral_slip_px * mm_per_px
                 x["mm_per_px"] = mm_per_px
                 x["scale_basis"] = scale_basis
                 x["visible_length_baseline_px"] = baseline_length
                 camera_frames.append(x)
             combined = pd.concat(camera_frames, ignore_index=True)
-            combined.to_csv(output_dir / f"{demo}_timeseries.csv", index=False)
+            timeseries_columns = [
+                "role", "frame_index", "host_timestamp_ns",
+                "elapsed_time_from_insertion_start_s", "phase",
+                "peg_valid", "hand_valid",
+                "insertion_depth_valid", "insertion_depth_px",
+                "axial_slip_valid", "axial_slip_px",
+                "lateral_slip_valid", "lateral_slip_px",
+                "peg_angle_deg", "peg_angular_error_deg",
+            ]
+            compact = combined.reindex(columns=timeseries_columns)
+            compact.to_csv(output_dir / f"{demo}_timeseries.csv", index=False)
             main = combined[combined.role == "main"].copy()
             secondary = combined[combined.role == "secondary"].copy()
             main_insert = main[main.phase == "insertion"]
@@ -141,31 +157,20 @@ def _analyze_impl(c, requested_demo=None):
                 demo=demo,
                 max_insertion_depth_mm=float(final.insertion_depth_mm),
                 max_depth_frame=int(final.frame_index),
-                max_axial_slip_mm=float(axial.max()) if len(axial) else np.nan,
-                min_axial_slip_mm=float(axial.min()) if len(axial) else np.nan,
                 max_abs_axial_slip_mm=float(axial.abs().max()) if len(axial) else np.nan,
                 max_abs_lateral_slip_mm=float(lateral.abs().max()) if len(lateral) else np.nan,
-                initial_angle_deg=float(initial.peg_angle_deg),
                 initial_angular_error_deg=float(initial.peg_angular_error_deg),
-                final_angle_deg=float(final.peg_angle_deg),
                 final_angular_error_deg=float(final.peg_angular_error_deg),
-                angular_error_change_deg=float(final.peg_angular_error_deg-initial.peg_angular_error_deg),
+                angular_error_change_deg=float(
+                    final.peg_angular_error_deg - initial.peg_angular_error_deg
+                ),
                 main_valid_frame_fraction=float(main.peg_valid.mean()),
-                secondary_valid_frame_fraction=float((secondary.peg_valid & secondary.hand_valid).mean()),
+                secondary_valid_frame_fraction=float(
+                    secondary.lateral_slip_valid.mean()
+                ),
             )
-            pre_main = main[main.phase == "pre"]
-            pre_secondary = secondary[secondary.phase == "pre"]
-            summary.update(_noise_fields("insertion_depth_mm", pre_main.insertion_depth_mm))
-            summary.update(_noise_fields("axial_slip_mm", pre_main.axial_slip_mm))
-            summary.update(_noise_fields("lateral_slip_mm", pre_secondary.lateral_slip_mm))
-            summary.update(_noise_fields("angular_error_deg", pre_main.peg_angular_error_deg))
-            summary.update(_noise_fields("peg_angle_deg", pre_main.peg_angle_deg))
-            summary.update(_noise_fields("visible_length_px", pre_main.peg_visible_length_px))
-            summary.update(_noise_fields("visible_width_px", pre_secondary.peg_visible_width_px))
             summaries.append(summary)
-    summary_path = output_dir / (f"summary_{requested_demo}.csv" if requested_demo else "summary.csv")
-    pd.DataFrame(summaries).to_csv(summary_path, index=False)
-    print(f"Saved metrics: {summary_path}")
+    return pd.DataFrame(summaries)
 
 def analyze(c, requested_demo=None):
     """Analyze demos independently, warning and continuing after demo-local failures."""
@@ -182,9 +187,7 @@ def analyze(c, requested_demo=None):
     skipped = []
     for demo in requested:
         try:
-            _analyze_impl(c, demo)
-            demo_summary_path = output_dir / f"summary_{demo}.csv"
-            summaries.append(pd.read_csv(demo_summary_path))
+            summaries.append(_analyze_impl(c, demo))
         except Exception as exc:
             warnings.warn(
                 f"Skipping {demo}: {exc}",
@@ -197,9 +200,7 @@ def analyze(c, requested_demo=None):
                 "error": str(exc),
             })
 
-    summary_path = output_dir / (
-        f"summary_{requested_demo}.csv" if requested_demo else "summary.csv"
-    )
+    summary_path = output_dir / "summary.csv"
     if summaries:
         pd.concat(summaries, ignore_index=True).to_csv(summary_path, index=False)
     else:

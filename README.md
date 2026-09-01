@@ -203,7 +203,7 @@ The CLI supports `inspect`, `check-prompts`, `segment`, `analyze`, `plot`, and `
 | Baseline | Median of the last five valid pre-insertion frames. |
 | Insertion depth | Main-camera reduction in the peg's visible length relative to the pre-insertion baseline. |
 | Axial slip | Main-camera change in peg length above the hand reference, measured along the estimated peg axis. |
-| Lateral slip | Secondary-camera change in signed perpendicular distance from the hand reference to the estimated peg centerline. |
+| Lateral slip | Secondary-camera change from the pre-insertion baseline in the Euclidean distance between the selected thumb-tip median point and the top-left corner of the axis-aligned bounding box of peg pixels strictly below the thumb row. Disconnected hand-row segments are separated, clipped to the full peg horizontal bounding box, and the eligible segment closest to the lower-peg corner is selected. |
 | Hand reference | Bottommost row of the hand mask, using the median horizontal coordinate of pixels on that row. |
 | Peg geometry | Principal-axis analysis of the peg mask, with visible length and width obtained from projection extents. |
 | Holder | The holder mask is validated but is not used in the current metric calculations. |
@@ -228,6 +228,8 @@ The CLI supports `inspect`, `check-prompts`, `segment`, `analyze`, `plot`, and `
 ├── demo_xxxxxx_timeseries.csv
 └── summary.csv
 ```
+
+The aggregate summary contains only the primary outcomes, angular-error endpoints, and camera-validity fractions. Timeseries files contain essential frame metadata and final pixel metrics only. Millimetre conversions and geometry helper quantities are not exported per frame. Analysis writes one aggregate `summary.csv`, including when `--demo` is used.
 
 Metadata includes prompts, selected object IDs, `t0`, `scale_frame_index`, holder centroid, peg rectangle dimensions, and scale.
 
