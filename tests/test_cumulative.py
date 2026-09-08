@@ -329,79 +329,70 @@ def test_cumulative_scatter_has_depth_and_axial_rows(tmp_path, monkeypatch):
     assert saved_limits[0] == saved_limits[1]
 
 
-def test_tolerance_normalization_pools_methods(tmp_path):
+def test_linear_analysis_is_drawn_and_exported_per_group(tmp_path, monkeypatch):
+    import matplotlib.axes
     import numpy as np
     import pandas as pd
     from peg_analysis.cumulative import cumulative_plots
 
-    run_a = tmp_path / "run_a"
-    run_b = tmp_path / "run_b"
-    _summary(run_a, [10.0, 20.0])
-    _summary(run_b, [12.0, 22.0])
-    for path, angles in ((run_a, [1.0, 3.0]), (run_b, [5.0, 7.0])):
-        frame = pd.read_csv(path / "summary.csv")
-        frame["initial_angular_error_deg"] = angles
-        frame.to_csv(path / "summary.csv", index=False)
+    run = tmp_path / "run"
+    _summary(run, [10.0, 20.0, 30.0])
+    frame = pd.read_csv(run / "summary.csv")
+    frame["initial_angular_error_deg"] = [1.0, 2.0, 3.0]
+    frame.to_csv(run / "summary.csv", index=False)
     spec = tmp_path / "cumulative.json"
     spec.write_text(json.dumps({
-        "normalization_type": "zscore",
-        "normalization_scope": "tolerance",
-        "methods": [{"name": "a"}, {"name": "b"}],
-        "datasets": [
-            {"method": "a", "tolerance": 0.5, "data_dirs": ["run_a"]},
-            {"method": "b", "tolerance": 0.5, "data_dirs": ["run_b"]},
-        ],
-    }))
-    destination = tmp_path / "out"
-    cumulative_plots(spec, destination)
-    plotted = pd.read_csv(destination / "plotted_trials.csv")
-    assert set(plotted.angle_normalization_scope) == {"tolerance"}
-    assert np.isclose(plotted.normalized_initial_angular_error.mean(), 0.0)
-    assert np.isclose(plotted.normalized_initial_angular_error.std(ddof=0), 1.0)
-    assert plotted.initial_angular_error_group_mean_deg.nunique() == 1
-
-
-def test_global_normalization_pools_tolerances_and_methods(tmp_path):
-    import numpy as np
-    import pandas as pd
-    from peg_analysis.cumulative import cumulative_plots
-
-    run_a = tmp_path / "run_a"
-    run_b = tmp_path / "run_b"
-    _summary(run_a, [10.0, 20.0])
-    _summary(run_b, [12.0, 22.0])
-    for path, angles in ((run_a, [1.0, 2.0]), (run_b, [10.0, 20.0])):
-        frame = pd.read_csv(path / "summary.csv")
-        frame["initial_angular_error_deg"] = angles
-        frame.to_csv(path / "summary.csv", index=False)
-    spec = tmp_path / "cumulative.json"
-    spec.write_text(json.dumps({
-        "normalization_type": "minmax",
-        "normalization_scope": "global",
-        "methods": [{"name": "a"}, {"name": "b"}],
-        "datasets": [
-            {"method": "a", "tolerance": 0.5, "data_dirs": ["run_a"]},
-            {"method": "b", "tolerance": 1.0, "data_dirs": ["run_b"]},
-        ],
-    }))
-    destination = tmp_path / "out"
-    cumulative_plots(spec, destination)
-    plotted = pd.read_csv(destination / "plotted_trials.csv")
-    assert set(plotted.angle_normalization_scope) == {"global"}
-    assert np.isclose(plotted.normalized_initial_angular_error.min(), 0.0)
-    assert np.isclose(plotted.normalized_initial_angular_error.max(), 1.0)
-    assert set(plotted.initial_angular_error_group_scale_deg) == {19.0}
-
-
-def test_invalid_normalization_scope_is_rejected(tmp_path):
-    import pytest
-    from peg_analysis.cumulative import load_cumulative_config
-
-    spec = tmp_path / "bad_scope.json"
-    spec.write_text(json.dumps({
-        "normalization_scope": "method",
+        "normalization_type": "zscore", "normalization_scope": "group",
+        "linear_analysis": {"enabled": True, "show_fit": True, "show_statistics": True},
         "methods": [{"name": "a"}],
         "datasets": [{"method": "a", "tolerance": 0.5, "data_dirs": ["run"]}],
     }))
-    with pytest.raises(ValueError, match="group, tolerance, global"):
-        load_cumulative_config(spec)
+    lines = []
+    original = matplotlib.axes.Axes.plot
+    def recording_plot(self, *args, **kwargs):
+        lines.append(args)
+        return original(self, *args, **kwargs)
+    monkeypatch.setattr(matplotlib.axes.Axes, "plot", recording_plot)
+    destination = tmp_path / "out"
+    cumulative_plots(spec, destination)
+    results = pd.read_csv(destination / "linear_correlations.csv")
+    assert len(results) == 2
+    assert set(results.outcome) == {"max_insertion_depth_mm", "max_abs_axial_slip_mm"}
+    assert (results.n == 3).all()
+    assert np.isclose(results.iloc[0].pearson_r, 1.0)
+    assert results.iloc[0].interpretation == "evidence_of_linear_association"
+    assert len(lines) >= 2
+
+
+def test_linear_analysis_handles_insufficient_and_constant_groups(tmp_path):
+    import pandas as pd
+    from peg_analysis.cumulative import cumulative_plots
+
+    run = tmp_path / "run"
+    _summary(run, [10.0, 20.0])
+    frame = pd.read_csv(run / "summary.csv")
+    frame["initial_angular_error_deg"] = [1.0, 1.0]
+    frame.to_csv(run / "summary.csv", index=False)
+    spec = tmp_path / "cumulative.json"
+    spec.write_text(json.dumps({
+        "linear_analysis": True,
+        "methods": [{"name": "a"}],
+        "datasets": [{"method": "a", "tolerance": 0.5, "data_dirs": ["run"]}],
+    }))
+    destination = tmp_path / "out"
+    cumulative_plots(spec, destination)
+    results = pd.read_csv(destination / "linear_correlations.csv")
+    assert (results.interpretation == "insufficient_data").all()
+    assert results.pearson_r.isna().all()
+
+
+def test_tolerance_and_global_normalization_scopes(tmp_path):
+    from peg_analysis.cumulative import load_cumulative_config
+    for scope in ("tolerance", "global"):
+        spec = tmp_path / f"{scope}.json"
+        spec.write_text(json.dumps({
+            "normalization_scope": scope,
+            "methods": [{"name": "a"}],
+            "datasets": [{"method": "a", "tolerance": 0.5, "data_dirs": ["run"]}],
+        }))
+        assert load_cumulative_config(spec)["normalization_scope"] == scope

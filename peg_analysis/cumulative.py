@@ -76,6 +76,30 @@ def load_cumulative_config(config_path):
             "normalization_scope must be one of: group, tolerance, global"
         )
 
+    linear_raw = raw.get("linear_analysis", True)
+    if isinstance(linear_raw, bool):
+        linear_analysis = {
+            "enabled": linear_raw,
+            "show_fit": linear_raw,
+            "show_statistics": linear_raw,
+            "confidence_band": False,
+            "alpha": 0.05,
+        }
+    elif isinstance(linear_raw, dict):
+        alpha = float(linear_raw.get("alpha", 0.05))
+        if not 0.0 < alpha < 1.0:
+            raise ValueError("linear_analysis.alpha must be between 0 and 1")
+        enabled = bool(linear_raw.get("enabled", True))
+        linear_analysis = {
+            "enabled": enabled,
+            "show_fit": enabled and bool(linear_raw.get("show_fit", True)),
+            "show_statistics": enabled and bool(linear_raw.get("show_statistics", True)),
+            "confidence_band": enabled and bool(linear_raw.get("confidence_band", False)),
+            "alpha": alpha,
+        }
+    else:
+        raise ValueError("linear_analysis must be a boolean or an object")
+
     return {
         "methods": normalized_methods,
         "datasets": normalized_datasets,
@@ -91,6 +115,7 @@ def load_cumulative_config(config_path):
         ),
         "normalization_type": normalization_type,
         "normalization_scope": normalization_scope,
+        "linear_analysis": linear_analysis,
     }
 
 
@@ -168,6 +193,65 @@ def _method_distribution(
             ha="left", va="bottom" if direction > 0 else "top",
             clip_on=False, zorder=4,
         )
+
+
+def _linear_analysis(x, y, alpha=0.05):
+    """Return least-squares and Pearson statistics for finite paired values."""
+    from scipy.stats import linregress
+
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    valid = np.isfinite(x) & np.isfinite(y)
+    x = x[valid]
+    y = y[valid]
+    result = {
+        "n": int(len(x)), "pearson_r": np.nan, "p_value": np.nan,
+        "r_squared": np.nan, "slope": np.nan, "intercept": np.nan,
+        "slope_stderr": np.nan, "intercept_stderr": np.nan,
+        "alpha": float(alpha), "interpretation": "insufficient_data",
+    }
+    if len(x) < 3:
+        return result
+    if np.ptp(x) <= 0 or np.ptp(y) <= 0:
+        result["interpretation"] = "constant_data"
+        return result
+    fit = linregress(x, y)
+    result.update(
+        pearson_r=float(fit.rvalue), p_value=float(fit.pvalue),
+        r_squared=float(fit.rvalue ** 2), slope=float(fit.slope),
+        intercept=float(fit.intercept), slope_stderr=float(fit.stderr),
+        intercept_stderr=float(fit.intercept_stderr),
+        interpretation=(
+            "evidence_of_linear_association"
+            if fit.pvalue < alpha else "no_clear_evidence"
+        ),
+    )
+    return result
+
+
+def _confidence_band(x, y, x_line, alpha=0.05):
+    """Return a two-sided confidence band for the fitted mean response."""
+    from scipy.stats import t
+
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    valid = np.isfinite(x) & np.isfinite(y)
+    x, y = x[valid], y[valid]
+    if len(x) < 3 or np.ptp(x) <= 0:
+        return None
+    slope, intercept = np.polyfit(x, y, 1)
+    residuals = y - (intercept + slope * x)
+    dof = len(x) - 2
+    s_err = np.sqrt(np.sum(residuals ** 2) / dof)
+    centered = x - x.mean()
+    denom = np.sum(centered ** 2)
+    if denom <= 0:
+        return None
+    half = t.ppf(1.0 - alpha / 2.0, dof) * s_err * np.sqrt(
+        1.0 / len(x) + (x_line - x.mean()) ** 2 / denom
+    )
+    fitted = intercept + slope * x_line
+    return fitted - half, fitted + half
 
 
 def cumulative_plots(
@@ -311,7 +395,6 @@ def cumulative_plots(
         raise ValueError("normalization_type must be one of: none, max, minmax, zscore")
 
     plotted_data["angle_normalization_type"] = selected_normalization
-    plotted_data["angle_normalization_scope"] = config["normalization_scope"]
     plotted_data["initial_angular_error_group_mean_deg"] = 0.0
     plotted_data["initial_angular_error_group_min_deg"] = 0.0
     plotted_data["initial_angular_error_group_max_deg"] = 0.0
@@ -319,7 +402,7 @@ def cumulative_plots(
     plotted_data["normalized_initial_angular_error"] = plotted_data[
         "initial_angular_error_deg"
     ].astype(float)
-
+    plotted_data["angle_normalization_scope"] = config["normalization_scope"]
     if config["normalization_scope"] == "group":
         normalization_groups = plotted_data.groupby(
             ["tolerance", "method"], sort=False
@@ -328,7 +411,6 @@ def cumulative_plots(
         normalization_groups = plotted_data.groupby(["tolerance"], sort=False)
     else:
         normalization_groups = [("global", plotted_data)]
-
     for _, group in normalization_groups:
         values = group["initial_angular_error_deg"].to_numpy(dtype=float)
         valid = values[np.isfinite(values)]
@@ -375,6 +457,8 @@ def cumulative_plots(
         "minmax": "Min-max normalized initial angular error",
         "zscore": "Initial angular error z-score",
     }
+    linear_config = config["linear_analysis"]
+    correlation_rows = []
     for row, (scatter_metric, ylabel, show_threshold) in enumerate(scatter_metrics):
         for column, tolerance in enumerate(tolerances):
             ax = scatter_axes[row, column]
@@ -416,6 +500,43 @@ def cumulative_plots(
                         ha="left", va="bottom" if direction > 0 else "top",
                         clip_on=False, zorder=4,
                     )
+                x_values = method_data["normalized_initial_angular_error"].to_numpy(dtype=float)
+                y_values = method_data[scatter_metric].to_numpy(dtype=float)
+                stats = _linear_analysis(x_values, y_values, linear_config["alpha"])
+                correlation_rows.append({
+                    "method": method_name,
+                    "tolerance": tolerance,
+                    "outcome": scatter_metric,
+                    "normalization_type": selected_normalization,
+                    "normalization_scope": config["normalization_scope"],
+                    **stats,
+                })
+                if linear_config["enabled"] and linear_config["show_fit"] and np.isfinite(stats["slope"]):
+                    finite_x = x_values[np.isfinite(x_values)]
+                    x_line = np.linspace(finite_x.min(), finite_x.max(), 100)
+                    y_line = stats["intercept"] + stats["slope"] * x_line
+                    ax.plot(x_line, y_line, color=colors[method_name], linewidth=1.8, alpha=0.85, zorder=2)
+                    if linear_config["confidence_band"]:
+                        band = _confidence_band(x_values, y_values, x_line, linear_config["alpha"])
+                        if band is not None:
+                            ax.fill_between(x_line, band[0], band[1], color=colors[method_name], alpha=0.10, linewidth=0, zorder=1)
+            if linear_config["enabled"] and linear_config["show_statistics"]:
+                panel_rows = [item for item in correlation_rows if str(item["tolerance"]) == str(tolerance) and item["outcome"] == scatter_metric]
+                annotations = []
+                for item in panel_rows:
+                    label = methods[item["method"]]["label"]
+                    if np.isfinite(item["pearson_r"]):
+                        annotations.append(
+                            f"{label}: n={item['n']}, r={item['pearson_r']:.2f}, "
+                            f"p={item['p_value']:.3g}, R²={item['r_squared']:.2f}"
+                        )
+                    else:
+                        annotations.append(f"{label}: n={item['n']}, linear statistics unavailable")
+                if annotations:
+                    ax.text(0.02, 0.98, "\n".join(annotations), transform=ax.transAxes,
+                            ha="left", va="top", fontsize=7.5,
+                            bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.82, edgecolor="0.75"),
+                            zorder=8)
             if show_threshold and threshold is not None:
                 ax.axhline(
                     threshold, color="0.35", linestyle="--", linewidth=1.1,
@@ -437,10 +558,15 @@ def cumulative_plots(
     scatter_figure.savefig(scatter_path, dpi=200, bbox_inches="tight")
     plt.close(scatter_figure)
 
+    import pandas as pd
+    correlations_path = output_dir / "linear_correlations.csv"
+    pd.DataFrame(correlation_rows).to_csv(correlations_path, index=False)
+
     print(f"Loaded {len(data)} trials")
     print(f"Plotted {len(plotted_data)} trials across {len(tolerances)} tolerance level(s)")
     print(f"Saved cumulative plot: {output_path}")
     print(f"Saved angle-outcomes scatter plot: {scatter_path}")
     print(f"Saved all trials: {output_dir / 'cumulative_trials.csv'}")
     print(f"Saved plotted trials: {output_dir / 'plotted_trials.csv'}")
+    print(f"Saved linear correlations: {correlations_path}")
     return output_path

@@ -5,6 +5,13 @@
   "nmax_trials": 10,
   "normalization_type": "zscore",
   "normalization_scope": "group",
+  "linear_analysis": {
+    "enabled": true,
+    "show_fit": true,
+    "show_statistics": true,
+    "confidence_band": false,
+    "alpha": 0.05
+  },
   "methods": [
     {
       "name": "method_a",
