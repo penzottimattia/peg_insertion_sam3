@@ -4,6 +4,7 @@
   "insertion_depth_threshold": 20.0,
   "nmax_trials": 10,
   "normalization_type": "zscore",
+  "normalization_scope": "group",
   "methods": [
     {
       "name": "method_a",

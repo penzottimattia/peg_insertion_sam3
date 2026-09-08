@@ -327,11 +327,18 @@ Paths may be absolute or relative to the JSON specification. The command writes 
 The angle-outcomes figure contains one column per tolerance and two rows: maximum insertion depth versus initial angular error, followed by maximum absolute axial slip versus initial angular error. It uses the same method colors and `Txx` labels as the bar plots and uses `x` markers for failures. If a failure threshold is configured, it is shown as a horizontal dashed line in every insertion-depth scatter panel and every left-hand insertion-depth bar panel. All scatter panels share both x- and y-axis limits across rows and columns for direct comparison.
 
 
-Choose the scatter-plot angle normalization at the top level:
+Choose the scatter-plot angle normalization and the population used to calculate its statistics at the top level:
 
 ```json
-"normalization_type": "zscore"
+"normalization_type": "zscore",
+"normalization_scope": "group"
 ```
+
+Supported normalization scopes are:
+
+- `"group"`: compute normalization statistics separately for each method and tolerance pair. This is the default and preserves the previous behavior.
+- `"tolerance"`: pool all methods at the same tolerance and compute one set of normalization statistics per tolerance.
+- `"global"`: pool every selected trial across all methods and tolerances and compute one shared set of normalization statistics.
 
 Supported values are:
 
@@ -340,7 +347,7 @@ Supported values are:
 - `"minmax"`: map the minimum and maximum initial angles within each method and tolerance pair to 0 and 1.
 - `"zscore"`: subtract the group mean and divide by the population standard deviation within each method and tolerance pair.
 
-Normalization uses only trials selected after applying per-method, per-tolerance `nmax_trials`. For constant groups, the scale safely falls back to `1.0`, so min-max values and z-scores are zero. `plotted_trials.csv` records `angle_normalization_type`, `initial_angular_error_group_mean_deg`, `initial_angular_error_group_min_deg`, `initial_angular_error_group_max_deg`, `initial_angular_error_group_scale_deg`, and `normalized_initial_angular_error`. Override the JSON for one run with `--normalization-type none`, `max`, `minmax`, or `zscore`. The legacy `normalized_angle: true` setting is still accepted and maps to `"max"`.
+Normalization uses only trials selected after applying per-method, per-tolerance `nmax_trials`. The `plotted_trials.csv` file records the chosen `angle_normalization_scope` together with the effective population statistics. For constant groups, the scale safely falls back to `1.0`, so min-max values and z-scores are zero. `plotted_trials.csv` records `angle_normalization_type`, `initial_angular_error_group_mean_deg`, `initial_angular_error_group_min_deg`, `initial_angular_error_group_max_deg`, `initial_angular_error_group_scale_deg`, and `normalized_initial_angular_error`. Override the JSON for one run with `--normalization-type none`, `max`, `minmax`, or `zscore`. The legacy `normalized_angle: true` setting is still accepted and maps to `"max"`.
 
 Set the optional maximum number of plotted trials at the top level:
 

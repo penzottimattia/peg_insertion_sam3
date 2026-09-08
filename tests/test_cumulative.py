@@ -327,3 +327,81 @@ def test_cumulative_scatter_has_depth_and_axial_rows(tmp_path, monkeypatch):
     assert "Maximum absolute axial slip (mm)" in saved_axis_labels
     assert len(saved_limits) == 2
     assert saved_limits[0] == saved_limits[1]
+
+
+def test_tolerance_normalization_pools_methods(tmp_path):
+    import numpy as np
+    import pandas as pd
+    from peg_analysis.cumulative import cumulative_plots
+
+    run_a = tmp_path / "run_a"
+    run_b = tmp_path / "run_b"
+    _summary(run_a, [10.0, 20.0])
+    _summary(run_b, [12.0, 22.0])
+    for path, angles in ((run_a, [1.0, 3.0]), (run_b, [5.0, 7.0])):
+        frame = pd.read_csv(path / "summary.csv")
+        frame["initial_angular_error_deg"] = angles
+        frame.to_csv(path / "summary.csv", index=False)
+    spec = tmp_path / "cumulative.json"
+    spec.write_text(json.dumps({
+        "normalization_type": "zscore",
+        "normalization_scope": "tolerance",
+        "methods": [{"name": "a"}, {"name": "b"}],
+        "datasets": [
+            {"method": "a", "tolerance": 0.5, "data_dirs": ["run_a"]},
+            {"method": "b", "tolerance": 0.5, "data_dirs": ["run_b"]},
+        ],
+    }))
+    destination = tmp_path / "out"
+    cumulative_plots(spec, destination)
+    plotted = pd.read_csv(destination / "plotted_trials.csv")
+    assert set(plotted.angle_normalization_scope) == {"tolerance"}
+    assert np.isclose(plotted.normalized_initial_angular_error.mean(), 0.0)
+    assert np.isclose(plotted.normalized_initial_angular_error.std(ddof=0), 1.0)
+    assert plotted.initial_angular_error_group_mean_deg.nunique() == 1
+
+
+def test_global_normalization_pools_tolerances_and_methods(tmp_path):
+    import numpy as np
+    import pandas as pd
+    from peg_analysis.cumulative import cumulative_plots
+
+    run_a = tmp_path / "run_a"
+    run_b = tmp_path / "run_b"
+    _summary(run_a, [10.0, 20.0])
+    _summary(run_b, [12.0, 22.0])
+    for path, angles in ((run_a, [1.0, 2.0]), (run_b, [10.0, 20.0])):
+        frame = pd.read_csv(path / "summary.csv")
+        frame["initial_angular_error_deg"] = angles
+        frame.to_csv(path / "summary.csv", index=False)
+    spec = tmp_path / "cumulative.json"
+    spec.write_text(json.dumps({
+        "normalization_type": "minmax",
+        "normalization_scope": "global",
+        "methods": [{"name": "a"}, {"name": "b"}],
+        "datasets": [
+            {"method": "a", "tolerance": 0.5, "data_dirs": ["run_a"]},
+            {"method": "b", "tolerance": 1.0, "data_dirs": ["run_b"]},
+        ],
+    }))
+    destination = tmp_path / "out"
+    cumulative_plots(spec, destination)
+    plotted = pd.read_csv(destination / "plotted_trials.csv")
+    assert set(plotted.angle_normalization_scope) == {"global"}
+    assert np.isclose(plotted.normalized_initial_angular_error.min(), 0.0)
+    assert np.isclose(plotted.normalized_initial_angular_error.max(), 1.0)
+    assert set(plotted.initial_angular_error_group_scale_deg) == {19.0}
+
+
+def test_invalid_normalization_scope_is_rejected(tmp_path):
+    import pytest
+    from peg_analysis.cumulative import load_cumulative_config
+
+    spec = tmp_path / "bad_scope.json"
+    spec.write_text(json.dumps({
+        "normalization_scope": "method",
+        "methods": [{"name": "a"}],
+        "datasets": [{"method": "a", "tolerance": 0.5, "data_dirs": ["run"]}],
+    }))
+    with pytest.raises(ValueError, match="group, tolerance, global"):
+        load_cumulative_config(spec)

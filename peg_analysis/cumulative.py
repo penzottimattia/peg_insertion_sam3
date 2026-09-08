@@ -70,6 +70,12 @@ def load_cumulative_config(config_path):
             "normalization_type must be one of: none, max, minmax, zscore"
         )
 
+    normalization_scope = str(raw.get("normalization_scope", "group")).strip().lower()
+    if normalization_scope not in {"group", "tolerance", "global"}:
+        raise ValueError(
+            "normalization_scope must be one of: group, tolerance, global"
+        )
+
     return {
         "methods": normalized_methods,
         "datasets": normalized_datasets,
@@ -84,6 +90,7 @@ def load_cumulative_config(config_path):
             else int(raw["nmax_trials"])
         ),
         "normalization_type": normalization_type,
+        "normalization_scope": normalization_scope,
     }
 
 
@@ -304,6 +311,7 @@ def cumulative_plots(
         raise ValueError("normalization_type must be one of: none, max, minmax, zscore")
 
     plotted_data["angle_normalization_type"] = selected_normalization
+    plotted_data["angle_normalization_scope"] = config["normalization_scope"]
     plotted_data["initial_angular_error_group_mean_deg"] = 0.0
     plotted_data["initial_angular_error_group_min_deg"] = 0.0
     plotted_data["initial_angular_error_group_max_deg"] = 0.0
@@ -311,7 +319,17 @@ def cumulative_plots(
     plotted_data["normalized_initial_angular_error"] = plotted_data[
         "initial_angular_error_deg"
     ].astype(float)
-    for _, group in plotted_data.groupby(["tolerance", "method"], sort=False):
+
+    if config["normalization_scope"] == "group":
+        normalization_groups = plotted_data.groupby(
+            ["tolerance", "method"], sort=False
+        )
+    elif config["normalization_scope"] == "tolerance":
+        normalization_groups = plotted_data.groupby(["tolerance"], sort=False)
+    else:
+        normalization_groups = [("global", plotted_data)]
+
+    for _, group in normalization_groups:
         values = group["initial_angular_error_deg"].to_numpy(dtype=float)
         valid = values[np.isfinite(values)]
         mean = float(np.mean(valid)) if len(valid) else 0.0
