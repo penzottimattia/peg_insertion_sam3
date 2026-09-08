@@ -341,80 +341,88 @@ def cumulative_plots(
             ) / scale
     plotted_data.to_csv(output_dir / "plotted_trials.csv", index=False)
 
+    scatter_metrics = (
+        ("max_insertion_depth_mm", "Maximum insertion depth (mm)", True),
+        ("max_abs_axial_slip_mm", "Maximum absolute axial slip (mm)", False),
+    )
     scatter_figure, scatter_axes = plt.subplots(
-        1, len(tolerances), figsize=(5.2 * len(tolerances), 4.25), squeeze=False,
-        sharex=True, sharey=True,
+        len(scatter_metrics), len(tolerances),
+        figsize=(5.2 * len(tolerances), 4.0 * len(scatter_metrics)),
+        squeeze=False, sharex=True, sharey=True,
     )
     threshold = config["insertion_depth_threshold"]
-    for column, tolerance in enumerate(tolerances):
-        ax = scatter_axes[0, column]
-        tolerance_data = plotted_data[
-            plotted_data["tolerance"].astype(str) == str(tolerance)
-        ]
-        for method_name in method_names:
-            method_data = tolerance_data[tolerance_data.method == method_name]
-            for order, (_, trial) in enumerate(method_data.iterrows()):
-                failed = (
-                    threshold is not None
-                    and float(trial.max_insertion_depth_mm) < threshold
+    angle_labels = {
+        "none": "Initial angular error (deg)",
+        "max": "Max-normalized initial angular error",
+        "minmax": "Min-max normalized initial angular error",
+        "zscore": "Initial angular error z-score",
+    }
+    for row, (scatter_metric, ylabel, show_threshold) in enumerate(scatter_metrics):
+        for column, tolerance in enumerate(tolerances):
+            ax = scatter_axes[row, column]
+            tolerance_data = plotted_data[
+                plotted_data["tolerance"].astype(str) == str(tolerance)
+            ]
+            for method_name in method_names:
+                method_data = tolerance_data[tolerance_data.method == method_name]
+                for order, (_, trial) in enumerate(method_data.iterrows()):
+                    failed = (
+                        threshold is not None
+                        and float(trial.max_insertion_depth_mm) < threshold
+                    )
+                    marker = "x" if failed else "o"
+                    scatter_kwargs = {
+                        "marker": marker,
+                        "color": colors[method_name],
+                        "s": 72 if failed else 45,
+                        "zorder": 5 if failed else 3,
+                    }
+                    if failed:
+                        scatter_kwargs["linewidths"] = 2.0
+                    else:
+                        scatter_kwargs.update(edgecolor="white", linewidth=0.55)
+                    angle_value = (
+                        float(trial.normalized_initial_angular_error)
+                        if selected_normalization != "none"
+                        else float(trial.initial_angular_error_deg)
+                    )
+                    outcome_value = float(trial[scatter_metric])
+                    if not np.isfinite(angle_value) or not np.isfinite(outcome_value):
+                        continue
+                    ax.scatter([angle_value], [outcome_value], **scatter_kwargs)
+                    direction = 1 if order % 2 == 0 else -1
+                    ax.annotate(
+                        trial.trial_label, xy=(angle_value, outcome_value),
+                        xytext=(4, direction * 5), textcoords="offset points",
+                        color=colors[method_name], alpha=0.78, fontsize=7,
+                        ha="left", va="bottom" if direction > 0 else "top",
+                        clip_on=False, zorder=4,
+                    )
+            if show_threshold and threshold is not None:
+                ax.axhline(
+                    threshold, color="0.35", linestyle="--", linewidth=1.1,
+                    alpha=0.75, zorder=0,
                 )
-                marker = "x" if failed else "o"
-                scatter_kwargs = {
-                    "marker": marker,
-                    "color": colors[method_name],
-                    "s": 72 if failed else 45,
-                    "zorder": 5 if failed else 3,
-                }
-                if failed:
-                    scatter_kwargs["linewidths"] = 2.0
-                else:
-                    scatter_kwargs.update(edgecolor="white", linewidth=0.55)
-                angle_value = (
-                    float(trial.normalized_initial_angular_error)
-                    if selected_normalization != "none"
-                    else float(trial.initial_angular_error_deg)
-                )
-                ax.scatter(
-                    [angle_value], [trial.max_insertion_depth_mm],
-                    **scatter_kwargs,
-                )
-                direction = 1 if order % 2 == 0 else -1
-                ax.annotate(
-                    trial.trial_label,
-                    xy=(angle_value, trial.max_insertion_depth_mm),
-                    xytext=(4, direction * 5), textcoords="offset points",
-                    color=colors[method_name], alpha=0.78, fontsize=7,
-                    ha="left", va="bottom" if direction > 0 else "top",
-                    clip_on=False, zorder=4,
-                )
-        if threshold is not None:
-            ax.axhline(
-                threshold, color="0.35", linestyle="--", linewidth=1.1,
-                alpha=0.75, zorder=0,
-            )
-        ax.set_title(f"{config['tolerance_label']}: {tolerance}")
-        angle_labels = {
-            "none": "Initial angular error (deg)",
-            "max": "Max-normalized initial angular error",
-            "minmax": "Min-max normalized initial angular error",
-            "zscore": "Initial angular error z-score",
-        }
-        ax.set_xlabel(angle_labels[selected_normalization])
-        ax.grid(alpha=0.22)
-    scatter_axes[0, 0].set_ylabel("Maximum insertion depth (mm)")
+            if row == 0:
+                ax.set_title(f"{config['tolerance_label']}: {tolerance}")
+            if row == len(scatter_metrics) - 1:
+                ax.set_xlabel(angle_labels[selected_normalization])
+            if column == 0:
+                ax.set_ylabel(ylabel)
+            ax.grid(alpha=0.22)
     scatter_figure.legend(
         handles=legend_handles, loc="upper center", ncol=len(method_names),
-        bbox_to_anchor=(0.5, 1.02), frameon=False,
+        bbox_to_anchor=(0.5, 1.01), frameon=False,
     )
-    scatter_figure.tight_layout(rect=(0, 0, 1, 0.94))
-    scatter_path = output_dir / "initial_angle_vs_depth_by_tolerance.png"
+    scatter_figure.tight_layout(rect=(0, 0, 1, 0.96))
+    scatter_path = output_dir / "initial_angle_vs_outcomes_by_tolerance.png"
     scatter_figure.savefig(scatter_path, dpi=200, bbox_inches="tight")
     plt.close(scatter_figure)
 
     print(f"Loaded {len(data)} trials")
     print(f"Plotted {len(plotted_data)} trials across {len(tolerances)} tolerance level(s)")
     print(f"Saved cumulative plot: {output_path}")
-    print(f"Saved angle-depth scatter plot: {scatter_path}")
+    print(f"Saved angle-outcomes scatter plot: {scatter_path}")
     print(f"Saved all trials: {output_dir / 'cumulative_trials.csv'}")
     print(f"Saved plotted trials: {output_dir / 'plotted_trials.csv'}")
     return output_path

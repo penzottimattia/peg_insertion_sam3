@@ -45,7 +45,7 @@ def test_cumulative_plot_combines_split_dirs_without_session(tmp_path):
     assert "session" not in combined.columns
     assert combined.trial_label.tolist() == ["T01", "T02", "T03", "T04", "T05"]
     assert (destination / "cumulative_outcomes.png").is_file()
-    assert (destination / "initial_angle_vs_depth_by_tolerance.png").is_file()
+    assert (destination / "initial_angle_vs_outcomes_by_tolerance.png").is_file()
 
 
 def test_cumulative_config_rejects_unknown_method(tmp_path):
@@ -293,3 +293,37 @@ def test_minmax_normalization_is_per_method_and_tolerance(tmp_path):
     assert set(scales) == {4.0, 30.0}
     assert set(plotted.groupby("method").initial_angular_error_group_min_deg.first()) == {1.0, 10.0}
     assert set(plotted.groupby("method").initial_angular_error_group_max_deg.first()) == {5.0, 40.0}
+
+
+def test_cumulative_scatter_has_depth_and_axial_rows(tmp_path, monkeypatch):
+    import matplotlib.figure
+    from peg_analysis.cumulative import cumulative_plots
+
+    run = tmp_path / "run"
+    _summary(run, [10.0, 30.0])
+    spec = tmp_path / "cumulative.json"
+    spec.write_text(json.dumps({
+        "methods": [{"name": "a"}],
+        "datasets": [
+            {"method": "a", "tolerance": 0.5, "data_dirs": ["run"]},
+        ],
+    }))
+
+    saved_axis_labels = []
+    saved_limits = []
+    original_savefig = matplotlib.figure.Figure.savefig
+
+    def recording_savefig(self, fname, *args, **kwargs):
+        if str(fname).endswith("initial_angle_vs_outcomes_by_tolerance.png"):
+            saved_axis_labels.extend(ax.get_ylabel() for ax in self.axes)
+            saved_limits.extend((ax.get_xlim(), ax.get_ylim()) for ax in self.axes)
+        return original_savefig(self, fname, *args, **kwargs)
+
+    monkeypatch.setattr(matplotlib.figure.Figure, "savefig", recording_savefig)
+    destination = tmp_path / "out"
+    cumulative_plots(spec, destination)
+
+    assert "Maximum insertion depth (mm)" in saved_axis_labels
+    assert "Maximum absolute axial slip (mm)" in saved_axis_labels
+    assert len(saved_limits) == 2
+    assert saved_limits[0] == saved_limits[1]

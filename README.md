@@ -321,10 +321,10 @@ Each `datasets` entry identifies a method and tolerance. `data_dirs` accepts one
 }
 ```
 
-Paths may be absolute or relative to the JSON specification. The command writes `cumulative_outcomes.png`, `initial_angle_vs_depth_by_tolerance.png`, `cumulative_trials.csv`, and `plotted_trials.csv`. The complete CSV always retains every configured trial. The plotted CSV and figure contain only the selected trials when `nmax_trials` is used. Trial labels in the figure correspond to the `trial_label` column in these CSV files.
+Paths may be absolute or relative to the JSON specification. The command writes `cumulative_outcomes.png`, `initial_angle_vs_outcomes_by_tolerance.png`, `cumulative_trials.csv`, and `plotted_trials.csv`. The complete CSV always retains every configured trial. The plotted CSV and figure contain only the selected trials when `nmax_trials` is used. Trial labels in the figure correspond to the `trial_label` column in these CSV files.
 
 
-The angle-depth figure contains one scatter panel per tolerance. It plots initial angular error against maximum insertion depth, uses the same method colors and `Txx` labels as the bar plots, and uses `x` markers for failures. If a failure threshold is configured, it is shown as a horizontal dashed line in every scatter panel and every left-hand insertion-depth bar panel. The scatter panels share both axes for direct comparison.
+The angle-outcomes figure contains one column per tolerance and two rows: maximum insertion depth versus initial angular error, followed by maximum absolute axial slip versus initial angular error. It uses the same method colors and `Txx` labels as the bar plots and uses `x` markers for failures. If a failure threshold is configured, it is shown as a horizontal dashed line in every insertion-depth scatter panel and every left-hand insertion-depth bar panel. All scatter panels share both x- and y-axis limits across rows and columns for direct comparison.
 
 
 Choose the scatter-plot angle normalization at the top level:
