@@ -167,6 +167,16 @@ Create figures from the generated summary:
 peg-analysis plot --input-dir /path/to/dataset
 ```
 
+Render a single photographic task-evolution trace for one demonstration. The last pre-insertion image is used as the background, while saved SAM masks are used only as alpha mattes to extract real RGB peg pixels from sampled insertion frames:
+
+```bash
+peg-analysis -c config.yaml render-demo \
+  --input-dir /path/to/dataset \
+  --demo demo_000002
+```
+
+By default, 12 peg appearances are overlaid for both cameras and the figure is cropped around the task. Use `--role main`, `--role secondary`, `--traces 20`, `--alpha 0.7`, `--no-crop`, or `-o figure.png` to customize the output. The default file is `<input-dir>/renders/<demo>_task_trace.png`. No masks, heatmaps, or artificial contour colours are drawn.
+
 Draw trials below an insertion depth threshold with `x` markers instead of circles:
 
 ```bash
@@ -205,7 +215,7 @@ peg-analysis merge-plot run_a run_b --insertion-depth-threshold 20
 
 The depth, axial-slip, and lateral-slip outcome panels use the same y-axis range for direct visual comparison.
 
-The CLI supports `inspect`, `check-prompts`, `segment`, `analyze`, `plot`, and `merge-plot`.
+The CLI supports `inspect`, `check-prompts`, `segment`, `analyze`, `plot`, `render-demo`, `merge-plot`, and `insert-gap`.
 
 ## Metrics
 
@@ -285,3 +295,65 @@ python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda
 ```
 
 If `torch.cuda.is_available()` is false, install a PyTorch wheel compatible with the installed NVIDIA driver and CUDA support. The verification script reports the detected PyTorch and CUDA state.
+
+
+## Cumulative method comparison
+
+Use a JSON specification to compare multiple methods across tolerance levels. Each figure row is one tolerance. The three columns show insertion depth, axial slip, and lateral slip using the existing distribution style: method-colored mean bars, 95% confidence intervals, individual trial markers, and short trial labels. The complete figure uses one shared y-axis range so all outcomes and tolerance rows are directly comparable.
+
+Copy and edit the included example:
+
+```bash
+cp cumulative.example.json cumulative.json
+peg-analysis cumulative-plot --spec cumulative.json -o cumulative_results --nmax-trials 10
+```
+
+Each `datasets` entry identifies a method and tolerance. `data_dirs` accepts one or more analyzed-data directories containing `summary.csv`, so split datasets can be combined without manually merging files:
+
+```json
+{
+  "method": "method_a",
+  "tolerance": 0.5,
+  "data_dirs": [
+    "/data/method_a_tol_0_5_part_1",
+    "/data/method_a_tol_0_5_part_2"
+  ]
+}
+```
+
+Paths may be absolute or relative to the JSON specification. The command writes `cumulative_outcomes.png`, `initial_angle_vs_depth_by_tolerance.png`, `cumulative_trials.csv`, and `plotted_trials.csv`. The complete CSV always retains every configured trial. The plotted CSV and figure contain only the selected trials when `nmax_trials` is used. Trial labels in the figure correspond to the `trial_label` column in these CSV files.
+
+
+The angle-depth figure contains one scatter panel per tolerance. It plots initial angular error against maximum insertion depth, uses the same method colors and `Txx` labels as the bar plots, and uses `x` markers for failures. If a failure threshold is configured, it is shown as a horizontal dashed line in every scatter panel and every left-hand insertion-depth bar panel. The scatter panels share both axes for direct comparison.
+
+
+Choose the scatter-plot angle normalization at the top level:
+
+```json
+"normalization_type": "zscore"
+```
+
+Supported values are:
+
+- `"none"`: raw initial angular error in degrees.
+- `"max"`: divide by the maximum absolute initial angle within each method and tolerance pair.
+- `"minmax"`: map the minimum and maximum initial angles within each method and tolerance pair to 0 and 1.
+- `"zscore"`: subtract the group mean and divide by the population standard deviation within each method and tolerance pair.
+
+Normalization uses only trials selected after applying per-method, per-tolerance `nmax_trials`. For constant groups, the scale safely falls back to `1.0`, so min-max values and z-scores are zero. `plotted_trials.csv` records `angle_normalization_type`, `initial_angular_error_group_mean_deg`, `initial_angular_error_group_min_deg`, `initial_angular_error_group_max_deg`, `initial_angular_error_group_scale_deg`, and `normalized_initial_angular_error`. Override the JSON for one run with `--normalization-type none`, `max`, `minmax`, or `zscore`. The legacy `normalized_angle: true` setting is still accepted and maps to `"max"`.
+
+Set the optional maximum number of plotted trials at the top level:
+
+```json
+"nmax_trials": 10
+```
+
+For every method at every tolerance, this independently selects the N trials with the greatest `max_insertion_depth_mm`. For example, with two methods, three tolerances, and `nmax_trials: 10`, the figure can include up to 60 trials. The CLI option `--nmax-trials` overrides the JSON value for one run. Omit the setting or use `null` to plot all trials.
+
+Set the optional top-level failure threshold in millimetres:
+
+```json
+"insertion_depth_threshold": 20.0
+```
+
+A trial whose `max_insertion_depth_mm` is below this threshold is drawn with an `x` marker in every outcome panel. Trials meeting the threshold retain circular markers. Omit the setting or use `null` to disable failure markers. Within each tolerance row, only methods that actually have data are shown on the x-axis; if one method is present, that row has one method label.

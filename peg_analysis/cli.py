@@ -91,6 +91,30 @@ def main():
         help='Draw trials below this maximum insertion depth (mm) with x markers',
     )
 
+    render = sub.add_parser(
+        'render-demo',
+        help='Overlay real RGB peg appearances as one task-evolution trace',
+    )
+    _add_input_dir(render, 'Analysis directory containing masks and segmentation metadata')
+    render.add_argument('--demo', required=True, help='Demo name, for example demo_000002')
+    render.add_argument(
+        '--role', choices=('main', 'secondary', 'both'), default='both',
+        help='Camera view to render (default: both)',
+    )
+    render.add_argument(
+        '--traces', type=int, default=12,
+        help='Number of sampled peg appearances per camera (default: 12)',
+    )
+    render.add_argument(
+        '--alpha', type=float, default=0.82,
+        help='Opacity of non-final peg appearances in (0, 1] (default: 0.82)',
+    )
+    render.add_argument(
+        '--no-crop', action='store_true',
+        help='Keep the full camera frame instead of cropping around the task',
+    )
+    render.add_argument('-o', '--output', help='Output PNG path')
+
     merge = sub.add_parser(
         'merge-plot',
         help='Merge and plot summary.csv files from multiple output directories; no config or dataset required',
@@ -105,6 +129,27 @@ def main():
     merge.add_argument(
         '--insertion-depth-threshold', type=float,
         help='Draw trials below this maximum insertion depth (mm) with x markers',
+    )
+
+    cumulative = sub.add_parser(
+        'cumulative-plot',
+        help='Compare methods with cumulative outcome curves, arranged by tolerance',
+    )
+    cumulative.add_argument(
+        '--spec', required=True,
+        help='JSON mapping methods and tolerances to one or more analyzed-data directories',
+    )
+    cumulative.add_argument(
+        '-o', '--output-dir',
+        help='Destination directory (default: cumulative_plots next to the JSON spec)',
+    )
+    cumulative.add_argument(
+        '--nmax-trials', type=int,
+        help='Plot only the N trials with the greatest maximum insertion depth; overrides JSON',
+    )
+    cumulative.add_argument(
+        '--normalization-type', choices=('none', 'max', 'minmax', 'zscore'),
+        help='Scatter angle normalization; overrides normalization_type in JSON',
     )
 
     gap = sub.add_parser(
@@ -127,6 +172,15 @@ def main():
                              help='Modify the source dataset instead of creating a copy')
 
     a = p.parse_args()
+
+    if a.command == 'cumulative-plot':
+        if a.nmax_trials is not None and a.nmax_trials < 1:
+            cumulative.error('--nmax-trials must be at least 1')
+        from .cumulative import cumulative_plots
+        cumulative_plots(
+            a.spec, a.output_dir, a.nmax_trials, a.normalization_type
+        )
+        return
 
     if a.command == 'insert-gap':
         if a.gap_ms <= 0:
@@ -165,7 +219,7 @@ def main():
         )
         return
 
-    if a.command == 'analyze':
+    if a.command in ('analyze', 'render-demo'):
         c = _load_analysis_config(a)
     elif a.command == 'plot':
         c = {'output_dir': str(Path(a.input_dir).expanduser().resolve())}
@@ -194,6 +248,17 @@ def main():
     elif a.command == 'analyze':
         from .analyze import analyze
         analyze(c, a.demo)
+    elif a.command == 'render-demo':
+        if a.traces < 2:
+            render.error('--traces must be at least 2')
+        if not 0 < a.alpha <= 1:
+            render.error('--alpha must be in (0, 1]')
+        from .render import render_demo
+        roles = ('main', 'secondary') if a.role == 'both' else (a.role,)
+        render_demo(
+            c, a.demo, roles=roles, traces=a.traces, alpha=a.alpha,
+            output_path=a.output, crop=not a.no_crop,
+        )
     else:
         from .plots import make_plots
         make_plots(

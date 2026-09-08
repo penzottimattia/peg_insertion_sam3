@@ -1,0 +1,295 @@
+import json
+
+
+def _summary(path, depths):
+    import pandas as pd
+    path.mkdir(parents=True)
+    pd.DataFrame({
+        "demo": [f"demo_{i:06d}" for i in range(len(depths))],
+        "max_insertion_depth_mm": depths,
+        "max_abs_axial_slip_mm": [1.0 + i for i in range(len(depths))],
+        "max_abs_lateral_slip_mm": [0.5 + i for i in range(len(depths))],
+        "initial_angular_error_deg": [0.75 + i for i in range(len(depths))],
+    }).to_csv(path / "summary.csv", index=False)
+
+
+def test_cumulative_plot_combines_split_dirs_without_session(tmp_path):
+    import pandas as pd
+    from peg_analysis.cumulative import cumulative_plots
+
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    other = tmp_path / "other"
+    _summary(first, [10.0, 20.0])
+    _summary(second, [30.0])
+    _summary(other, [15.0, 25.0])
+    spec = tmp_path / "cumulative.json"
+    spec.write_text(json.dumps({
+        "methods": [
+            {"name": "a", "color": "#0072B2"},
+            {"name": "b", "color": "#D55E00"},
+        ],
+        "datasets": [
+            {"method": "a", "tolerance": 0.5,
+             "data_dirs": ["first", "second"]},
+            {"method": "b", "tolerance": 0.5,
+             "data_dirs": ["other"]},
+        ],
+    }))
+
+    destination = tmp_path / "out"
+    cumulative_plots(spec, destination)
+    combined = pd.read_csv(destination / "cumulative_trials.csv")
+    assert len(combined) == 5
+    assert len(combined[combined.method == "a"]) == 3
+    assert "session" not in combined.columns
+    assert combined.trial_label.tolist() == ["T01", "T02", "T03", "T04", "T05"]
+    assert (destination / "cumulative_outcomes.png").is_file()
+    assert (destination / "initial_angle_vs_depth_by_tolerance.png").is_file()
+
+
+def test_cumulative_config_rejects_unknown_method(tmp_path):
+    import pytest
+    from peg_analysis.cumulative import load_cumulative_config
+
+    spec = tmp_path / "bad.json"
+    spec.write_text(json.dumps({
+        "methods": [{"name": "a"}],
+        "datasets": [{
+            "method": "missing", "tolerance": 1, "data_dirs": ["run"],
+        }],
+    }))
+    with pytest.raises(ValueError, match="unknown method"):
+        load_cumulative_config(spec)
+
+
+def test_distribution_uses_x_for_failed_depth():
+    import matplotlib.pyplot as plt
+    from peg_analysis.cumulative import _method_distribution
+
+    fig, ax = plt.subplots()
+    _method_distribution(
+        ax, [10.0, 30.0], 0, "blue", ["T01", "T02"], [True, False]
+    )
+    x_path = ax.collections[-2].get_paths()[0]
+    circle_path = ax.collections[-1].get_paths()[0]
+    assert len(x_path.vertices) < len(circle_path.vertices)
+    plt.close(fig)
+
+
+def test_cumulative_nmax_is_applied_per_tolerance_and_method(tmp_path):
+    import pandas as pd
+    from peg_analysis.cumulative import cumulative_plots
+
+    a_tol_low = tmp_path / "a_tol_low"
+    b_tol_low = tmp_path / "b_tol_low"
+    a_tol_high = tmp_path / "a_tol_high"
+    _summary(a_tol_low, [1.0, 9.0, 4.0])
+    _summary(b_tol_low, [2.0, 8.0, 5.0])
+    _summary(a_tol_high, [3.0, 7.0, 6.0])
+    spec = tmp_path / "cumulative.json"
+    spec.write_text(json.dumps({
+        "nmax_trials": 2,
+        "methods": [{"name": "a"}, {"name": "b"}],
+        "datasets": [
+            {"method": "a", "tolerance": 0.5, "data_dirs": ["a_tol_low"]},
+            {"method": "b", "tolerance": 0.5, "data_dirs": ["b_tol_low"]},
+            {"method": "a", "tolerance": 1.0, "data_dirs": ["a_tol_high"]},
+        ],
+    }))
+
+    destination = tmp_path / "out"
+    cumulative_plots(spec, destination)
+    all_trials = pd.read_csv(destination / "cumulative_trials.csv")
+    plotted = pd.read_csv(destination / "plotted_trials.csv")
+    assert len(all_trials) == 9
+    assert len(plotted) == 6
+    assert sorted(plotted.query("method == 'a' and tolerance == 0.5").max_insertion_depth_mm) == [4.0, 9.0]
+    assert sorted(plotted.query("method == 'b' and tolerance == 0.5").max_insertion_depth_mm) == [5.0, 8.0]
+    assert sorted(plotted.query("method == 'a' and tolerance == 1.0").max_insertion_depth_mm) == [6.0, 7.0]
+
+def test_cumulative_cli_nmax_overrides_json(tmp_path):
+    import pandas as pd
+    from peg_analysis.cumulative import cumulative_plots
+
+    run = tmp_path / "run"
+    _summary(run, [1.0, 4.0, 8.0])
+    spec = tmp_path / "cumulative.json"
+    spec.write_text(json.dumps({
+        "nmax_trials": 1,
+        "methods": [{"name": "a"}],
+        "datasets": [
+            {"method": "a", "tolerance": 1.0, "data_dirs": ["run"]},
+        ],
+    }))
+
+    destination = tmp_path / "out"
+    cumulative_plots(spec, destination, nmax_trials=2)
+    plotted = pd.read_csv(destination / "plotted_trials.csv")
+    assert sorted(plotted.max_insertion_depth_mm) == [4.0, 8.0]
+
+
+def test_normalized_angle_and_threshold_line_are_supported(tmp_path, monkeypatch):
+    import matplotlib.axes
+    from peg_analysis.cumulative import cumulative_plots
+
+    run = tmp_path / "run"
+    _summary(run, [10.0, 30.0])
+    spec = tmp_path / "cumulative.json"
+    spec.write_text(json.dumps({
+        "normalized_angle": True,
+        "insertion_depth_threshold": 20.0,
+        "methods": [{"name": "a"}],
+        "datasets": [
+            {"method": "a", "tolerance": 0.5, "data_dirs": ["run"]},
+        ],
+    }))
+
+    horizontal_lines = []
+    original_axhline = matplotlib.axes.Axes.axhline
+
+    def recording_axhline(self, y=0, *args, **kwargs):
+        horizontal_lines.append(float(y))
+        return original_axhline(self, y, *args, **kwargs)
+
+    monkeypatch.setattr(matplotlib.axes.Axes, "axhline", recording_axhline)
+    destination = tmp_path / "out"
+    cumulative_plots(spec, destination)
+    assert horizontal_lines.count(20.0) == 2
+
+    import pandas as pd
+    plotted = pd.read_csv(destination / "plotted_trials.csv")
+    assert plotted.normalized_initial_angular_error.max() == 1.0
+    assert plotted.initial_angular_error_group_scale_deg.nunique() == 1
+
+
+def test_normalized_angle_uses_separate_scale_per_method_and_tolerance(tmp_path):
+    import pandas as pd
+    from peg_analysis.cumulative import cumulative_plots
+
+    runs = {}
+    for name, depths in {
+        "a_low": [10.0, 30.0],
+        "b_low": [12.0, 32.0],
+        "a_high": [14.0, 34.0],
+    }.items():
+        runs[name] = tmp_path / name
+        _summary(runs[name], depths)
+
+    # Give each group a distinct maximum initial angle.
+    for name, angles in {
+        "a_low": [1.0, 2.0],
+        "b_low": [2.0, 8.0],
+        "a_high": [3.0, 6.0],
+    }.items():
+        path = runs[name] / "summary.csv"
+        frame = pd.read_csv(path)
+        frame["initial_angular_error_deg"] = angles
+        frame.to_csv(path, index=False)
+
+    spec = tmp_path / "cumulative.json"
+    spec.write_text(json.dumps({
+        "normalized_angle": True,
+        "methods": [{"name": "a"}, {"name": "b"}],
+        "datasets": [
+            {"method": "a", "tolerance": 0.5, "data_dirs": ["a_low"]},
+            {"method": "b", "tolerance": 0.5, "data_dirs": ["b_low"]},
+            {"method": "a", "tolerance": 1.0, "data_dirs": ["a_high"]},
+        ],
+    }))
+
+    destination = tmp_path / "out"
+    cumulative_plots(spec, destination)
+    plotted = pd.read_csv(destination / "plotted_trials.csv")
+    scales = plotted.groupby(["method", "tolerance"])[
+        "initial_angular_error_group_scale_deg"
+    ].first().to_dict()
+    assert scales == {("a", 0.5): 2.0, ("a", 1.0): 6.0, ("b", 0.5): 8.0}
+    maxima = plotted.groupby(["method", "tolerance"])[
+        "normalized_initial_angular_error"
+    ].max()
+    assert (maxima == 1.0).all()
+
+
+def test_zscore_normalization_is_per_method_and_tolerance(tmp_path):
+    import numpy as np
+    import pandas as pd
+    from peg_analysis.cumulative import cumulative_plots
+
+    run_a = tmp_path / "run_a"
+    run_b = tmp_path / "run_b"
+    _summary(run_a, [10.0, 20.0, 30.0])
+    _summary(run_b, [12.0, 22.0, 32.0])
+    for path, angles in ((run_a, [1.0, 2.0, 3.0]), (run_b, [10.0, 20.0, 30.0])):
+        frame = pd.read_csv(path / "summary.csv")
+        frame["initial_angular_error_deg"] = angles
+        frame.to_csv(path / "summary.csv", index=False)
+
+    spec = tmp_path / "cumulative.json"
+    spec.write_text(json.dumps({
+        "normalization_type": "zscore",
+        "methods": [{"name": "a"}, {"name": "b"}],
+        "datasets": [
+            {"method": "a", "tolerance": 0.5, "data_dirs": ["run_a"]},
+            {"method": "b", "tolerance": 0.5, "data_dirs": ["run_b"]},
+        ],
+    }))
+    destination = tmp_path / "out"
+    cumulative_plots(spec, destination)
+    plotted = pd.read_csv(destination / "plotted_trials.csv")
+    for _, group in plotted.groupby(["method", "tolerance"]):
+        assert np.isclose(group.normalized_initial_angular_error.mean(), 0.0)
+        assert np.isclose(group.normalized_initial_angular_error.std(ddof=0), 1.0)
+    assert set(plotted.angle_normalization_type) == {"zscore"}
+
+
+def test_invalid_normalization_type_is_rejected(tmp_path):
+    import pytest
+    from peg_analysis.cumulative import load_cumulative_config
+
+    spec = tmp_path / "bad_normalization.json"
+    spec.write_text(json.dumps({
+        "normalization_type": "unknown",
+        "methods": [{"name": "a"}],
+        "datasets": [
+            {"method": "a", "tolerance": 0.5, "data_dirs": ["run"]},
+        ],
+    }))
+    with pytest.raises(ValueError, match="none, max, minmax, zscore"):
+        load_cumulative_config(spec)
+
+
+def test_minmax_normalization_is_per_method_and_tolerance(tmp_path):
+    import numpy as np
+    import pandas as pd
+    from peg_analysis.cumulative import cumulative_plots
+
+    run_a = tmp_path / "run_a"
+    run_b = tmp_path / "run_b"
+    _summary(run_a, [10.0, 20.0, 30.0])
+    _summary(run_b, [12.0, 22.0, 32.0])
+    for path, angles in ((run_a, [1.0, 2.0, 5.0]), (run_b, [10.0, 20.0, 40.0])):
+        frame = pd.read_csv(path / "summary.csv")
+        frame["initial_angular_error_deg"] = angles
+        frame.to_csv(path / "summary.csv", index=False)
+
+    spec = tmp_path / "cumulative.json"
+    spec.write_text(json.dumps({
+        "normalization_type": "minmax",
+        "methods": [{"name": "a"}, {"name": "b"}],
+        "datasets": [
+            {"method": "a", "tolerance": 0.5, "data_dirs": ["run_a"]},
+            {"method": "b", "tolerance": 0.5, "data_dirs": ["run_b"]},
+        ],
+    }))
+    destination = tmp_path / "out"
+    cumulative_plots(spec, destination)
+    plotted = pd.read_csv(destination / "plotted_trials.csv")
+    for _, group in plotted.groupby(["method", "tolerance"]):
+        assert np.isclose(group.normalized_initial_angular_error.min(), 0.0)
+        assert np.isclose(group.normalized_initial_angular_error.max(), 1.0)
+    assert set(plotted.angle_normalization_type) == {"minmax"}
+    scales = plotted.groupby("method").initial_angular_error_group_scale_deg.first()
+    assert set(scales) == {4.0, 30.0}
+    assert set(plotted.groupby("method").initial_angular_error_group_min_deg.first()) == {1.0, 10.0}
+    assert set(plotted.groupby("method").initial_angular_error_group_max_deg.first()) == {5.0, 40.0}

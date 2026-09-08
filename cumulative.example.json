@@ -1,0 +1,51 @@
+{
+  "title": "Method comparison across peg tolerances",
+  "tolerance_label": "Peg tolerance (mm)",
+  "insertion_depth_threshold": 20.0,
+  "nmax_trials": 10,
+  "normalization_type": "zscore",
+  "methods": [
+    {
+      "name": "method_a",
+      "label": "Method A",
+      "color": "#0072B2"
+    },
+    {
+      "name": "method_b",
+      "label": "Method B",
+      "color": "#D55E00"
+    }
+  ],
+  "datasets": [
+    {
+      "method": "method_a",
+      "tolerance": 0.5,
+      "data_dirs": [
+        "/path/to/method_a_tol_0_5_part_1",
+        "/path/to/method_a_tol_0_5_part_2"
+      ]
+    },
+    {
+      "method": "method_b",
+      "tolerance": 0.5,
+      "data_dirs": [
+        "/path/to/method_b_tol_0_5"
+      ]
+    },
+    {
+      "method": "method_a",
+      "tolerance": 1.0,
+      "data_dirs": [
+        "/path/to/method_a_tol_1_0"
+      ]
+    },
+    {
+      "method": "method_b",
+      "tolerance": 1.0,
+      "data_dirs": [
+        "/path/to/method_b_tol_1_0_part_1",
+        "/path/to/method_b_tol_1_0_part_2"
+      ]
+    }
+  ]
+}
