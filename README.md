@@ -354,11 +354,12 @@ Configure per-group linear analysis for both angle-outcome scatter rows:
   "show_fit": true,
   "show_statistics": true,
   "confidence_band": false,
-  "alpha": 0.05
+  "alpha": 0.05,
+  "line_width": 1.8
 }
 ```
 
-For every method/tolerance group, the scatter figure draws an optional least-squares fit and reports `n`, Pearson's `r`, the two-sided p-value, and `R²`. The command also writes `linear_correlations.csv` with the slope, intercept, standard errors, normalization settings, and a cautious interpretation. Groups with fewer than three finite pairs or constant input/output values are recorded as unavailable rather than assigned misleading statistics. Set `linear_analysis` to `false` to hide fits and annotations while still exporting the numerical analysis.
+For every method/tolerance group, the scatter figure draws an optional least-squares fit. Set `line_width` to control the fitted-line thickness. It reports `n`, Pearson's `r`, the two-sided p-value, and `R²`. The command also writes `linear_correlations.csv` with the slope, intercept, standard errors, normalization settings, and a cautious interpretation. Groups with fewer than three finite pairs or constant input/output values are recorded as unavailable rather than assigned misleading statistics. Set `linear_analysis` to `false` to hide fits and annotations while still exporting the numerical analysis.
 
 Set the optional maximum number of plotted trials at the top level:
 

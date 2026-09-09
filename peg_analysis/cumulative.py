@@ -84,18 +84,23 @@ def load_cumulative_config(config_path):
             "show_statistics": linear_raw,
             "confidence_band": False,
             "alpha": 0.05,
+            "line_width": 1.8,
         }
     elif isinstance(linear_raw, dict):
         alpha = float(linear_raw.get("alpha", 0.05))
         if not 0.0 < alpha < 1.0:
             raise ValueError("linear_analysis.alpha must be between 0 and 1")
         enabled = bool(linear_raw.get("enabled", True))
+        line_width = float(linear_raw.get("line_width", 1.8))
+        if not np.isfinite(line_width) or line_width <= 0.0:
+            raise ValueError("linear_analysis.line_width must be greater than zero")
         linear_analysis = {
             "enabled": enabled,
             "show_fit": enabled and bool(linear_raw.get("show_fit", True)),
             "show_statistics": enabled and bool(linear_raw.get("show_statistics", True)),
             "confidence_band": enabled and bool(linear_raw.get("confidence_band", False)),
             "alpha": alpha,
+            "line_width": line_width,
         }
     else:
         raise ValueError("linear_analysis must be a boolean or an object")
@@ -515,7 +520,7 @@ def cumulative_plots(
                     finite_x = x_values[np.isfinite(x_values)]
                     x_line = np.linspace(finite_x.min(), finite_x.max(), 100)
                     y_line = stats["intercept"] + stats["slope"] * x_line
-                    ax.plot(x_line, y_line, color=colors[method_name], linewidth=1.8, alpha=0.85, zorder=2)
+                    ax.plot(x_line, y_line, color=colors[method_name], linewidth=linear_config["line_width"], alpha=0.85, zorder=2)
                     if linear_config["confidence_band"]:
                         band = _confidence_band(x_values, y_values, x_line, linear_config["alpha"])
                         if band is not None:
@@ -530,11 +535,12 @@ def cumulative_plots(
                             f"{label}: n={item['n']}, r={item['pearson_r']:.2f}, "
                             f"p={item['p_value']:.3g}, R²={item['r_squared']:.2f}"
                         )
-                    else:
-                        annotations.append(f"{label}: n={item['n']}, linear statistics unavailable")
+                    # Unavailable groups remain in the CSV without placeholder plot text.
                 if annotations:
-                    ax.text(0.02, 0.98, "\n".join(annotations), transform=ax.transAxes,
-                            ha="left", va="top", fontsize=7.5,
+                    statistics_y = 0.02 if row == 0 else 0.98
+                    statistics_va = "bottom" if row == 0 else "top"
+                    ax.text(0.02, statistics_y, "\n".join(annotations), transform=ax.transAxes,
+                            ha="left", va=statistics_va, fontsize=7.5,
                             bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.82, edgecolor="0.75"),
                             zorder=8)
             if show_threshold and threshold is not None:

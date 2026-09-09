@@ -396,3 +396,46 @@ def test_tolerance_and_global_normalization_scopes(tmp_path):
             "datasets": [{"method": "a", "tolerance": 0.5, "data_dirs": ["run"]}],
         }))
         assert load_cumulative_config(spec)["normalization_scope"] == scope
+
+
+def test_linear_analysis_line_width_is_loaded_and_validated(tmp_path):
+    import pytest
+    from peg_analysis.cumulative import load_cumulative_config
+
+    base = {
+        "methods": [{"name": "a"}],
+        "datasets": [{"method": "a", "tolerance": 0.5, "data_dirs": ["run"]}],
+    }
+    spec = tmp_path / "line_width.json"
+    spec.write_text(json.dumps({**base, "linear_analysis": {"line_width": 3.25}}))
+    assert load_cumulative_config(spec)["linear_analysis"]["line_width"] == 3.25
+
+    spec.write_text(json.dumps({**base, "linear_analysis": {"line_width": 0}}))
+    with pytest.raises(ValueError, match="line_width must be greater than zero"):
+        load_cumulative_config(spec)
+
+
+def test_linear_analysis_line_width_controls_fit(tmp_path, monkeypatch):
+    import matplotlib.axes
+    import pandas as pd
+    from peg_analysis.cumulative import cumulative_plots
+
+    run = tmp_path / "run"
+    _summary(run, [10.0, 20.0, 30.0])
+    frame = pd.read_csv(run / "summary.csv")
+    frame["initial_angular_error_deg"] = [1.0, 2.0, 3.0]
+    frame.to_csv(run / "summary.csv", index=False)
+    spec = tmp_path / "cumulative.json"
+    spec.write_text(json.dumps({
+        "linear_analysis": {"line_width": 3.25},
+        "methods": [{"name": "a"}],
+        "datasets": [{"method": "a", "tolerance": 0.5, "data_dirs": ["run"]}],
+    }))
+    widths = []
+    original = matplotlib.axes.Axes.plot
+    def recording_plot(self, *args, **kwargs):
+        widths.append(kwargs.get("linewidth"))
+        return original(self, *args, **kwargs)
+    monkeypatch.setattr(matplotlib.axes.Axes, "plot", recording_plot)
+    cumulative_plots(spec, tmp_path / "out")
+    assert widths and all(width == 3.25 for width in widths)

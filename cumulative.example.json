@@ -10,7 +10,8 @@
     "show_fit": true,
     "show_statistics": true,
     "confidence_band": false,
-    "alpha": 0.05
+    "alpha": 0.05,
+    "line_width": 1.8
   },
   "methods": [
     {
