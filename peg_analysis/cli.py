@@ -76,6 +76,17 @@ def main():
     seg.add_argument('--demo')
     seg.add_argument('--overwrite', action='store_true')
 
+    pixels = sub.add_parser(
+        'extract-pixels',
+        help='Extract RGB pixels for peg, holder, and hand from requested frames in both cameras',
+    )
+    source = pixels.add_mutually_exclusive_group(required=True)
+    source.add_argument('--dataset-path', help='HDF5 dataset; run prompts only on requested frames')
+    source.add_argument('--input-dir', help='Already segmented analysis directory containing masks')
+    pixels.add_argument('--demo', help='Demo name or numeric index; omit to process all complete demos')
+    pixels.add_argument('--frames', nargs='+', type=int, metavar='N', help='Frame indices to extract; omit for first, handover (last pre-gap), and last')
+    pixels.add_argument('-o', '--output-dir', help='Destination directory (default: <analysis>/pixels or <dataset>_pixels)')
+
     ana = sub.add_parser('analyze', help='Compute metrics from saved masks')
     _add_input_dir(
         ana,
@@ -172,6 +183,21 @@ def main():
                              help='Modify the source dataset instead of creating a copy')
 
     a = p.parse_args()
+
+    if a.command == 'extract-pixels':
+        from .extract_pixels import extract_pixels
+        if a.input_dir:
+            c = _load_analysis_config(a)
+            source_kind = 'segmented'
+            pixel_output = a.output_dir
+        else:
+            # Keep extraction artifacts separate from the normal analysis directory.
+            default_pixels = str(Path(a.dataset_path).expanduser().resolve().with_suffix('')) + '_pixels'
+            c = config(a.config, dataset_path=a.dataset_path, output_dir=default_pixels)
+            source_kind = 'hdf5'
+            pixel_output = a.output_dir or default_pixels
+        extract_pixels(c, a.demo, a.frames, source=source_kind, output_dir=pixel_output)
+        return
 
     if a.command == 'cumulative-plot':
         if a.nmax_trials is not None and a.nmax_trials < 1:

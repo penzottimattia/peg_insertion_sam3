@@ -215,6 +215,24 @@ peg-analysis merge-plot run_a run_b --insertion-depth-threshold 20
 
 The depth, axial-slip, and lateral-slip outcome panels use the same y-axis range for direct visual comparison.
 
+Extract the original RGB pixels selected by all three prompts (`peg`, `holder`, and `hand`) for explicit frame indices from both cameras. With an already segmented directory, saved masks are used and SAM is not rerun:
+
+```bash
+peg-analysis -c config.yaml extract-pixels --input-dir /path/to/dataset \
+  --demo demo_000002 --frames 100 250 400
+```
+
+Or operate directly on an HDF5 dataset. In this mode SAM runs the configured prompts independently on only the requested frames:
+
+```bash
+peg-analysis -c config.yaml extract-pixels --dataset-path /path/to/dataset.h5 \
+  --demo demo_000002 --frames 100 250 400 -o /path/to/pixels
+```
+
+Each object/frame/camera is stored as a compressed NPZ containing `x`, `y`, and `rgb` arrays, and `manifest.json` records matches and pixel counts.
+If `--frames` is omitted, the command automatically extracts frame `0`, the handover frame (the last frame before the detected timestamp discontinuity), and the final frame, independently for each camera.
+If `--demo` is omitted, the command processes every complete demonstration. `--demo` can still be supplied to restrict extraction to one demonstration.
+
 The CLI supports `inspect`, `check-prompts`, `segment`, `analyze`, `plot`, `render-demo`, `merge-plot`, and `insert-gap`.
 
 ## Metrics
