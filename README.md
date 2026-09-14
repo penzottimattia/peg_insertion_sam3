@@ -394,3 +394,23 @@ Set the optional top-level failure threshold in millimetres:
 ```
 
 A trial whose `max_insertion_depth_mm` is below this threshold is drawn with an `x` marker in every outcome panel. Trials meeting the threshold retain circular markers. Omit the setting or use `null` to disable failure markers. Within each tolerance row, only methods that actually have data are shown on the x-axis; if one method is present, that row has one method label.
+
+## Optional secondary camera and hand tracking
+
+Only `main_camera_serial` and `text_prompts.main.peg` are required. To run on a
+single-camera dataset, omit `secondary_camera_serial` (or set it to `null`) and
+the `text_prompts.secondary` section may also be omitted.
+
+The `hand` prompt is optional independently for each configured camera. When it
+is absent, segmentation and analysis still produce peg-based insertion depth
+and angular metrics. Hand-derived outputs are left missing rather than causing
+the demonstration to fail:
+
+- main hand absent: axial-slip values and validity are missing/false;
+- secondary hand absent: lateral-slip values and validity are missing/false;
+- secondary camera absent: all secondary-camera and lateral-slip summary values
+  are missing, while main-camera analysis continues normally.
+
+The `holder` prompt is also optional because the current metrics do not depend
+on it. Existing configurations that provide both cameras and all three prompts
+retain their previous behavior.

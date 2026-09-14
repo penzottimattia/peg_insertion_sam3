@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 
 from .analyze import load_saved_masks
-from .core import group
+from .core import camera_roles, group
 
 
 _ROLE_TITLE = {"main": "Main camera", "secondary": "Secondary camera"}
@@ -109,7 +109,8 @@ def render_demo(c, demo, roles=("main", "secondary"), traces=12,
         raise ValueError("traces must be at least 2")
     if not 0 < alpha <= 1:
         raise ValueError("alpha must be in (0, 1]")
-    unknown = set(roles) - {"main", "secondary"}
+    available_roles = {role for role, _ in camera_roles(c)}
+    unknown = set(roles) - available_roles
     if unknown:
         raise ValueError(f"Unknown camera role(s): {', '.join(sorted(unknown))}")
     if not roles:

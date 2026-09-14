@@ -1,5 +1,6 @@
 main_camera_serial: "ENTER_MAIN_SERIAL"
-secondary_camera_serial: "ENTER_SECONDARY_SERIAL"
+# Optional. Omit or set to null for main-camera-only datasets.
+secondary_camera_serial: null
 
 sam3:
   gpus: [0]
@@ -13,22 +14,20 @@ sam3:
 text_prompts:
   main:
     peg: "the insertion peg"
-    holder: "the peg holder"
-    hand: "the hand holding the peg"
+    holder: "the peg holder"  # optional
+    hand: "the hand holding the peg"  # optional; enables axial slip
+  # Optional, used only when secondary_camera_serial is configured.
   secondary:
     peg: "the insertion peg"
-    holder: "the peg holder"
-    hand: "the hand holding the peg"
+    holder: "the peg holder"  # optional
+    hand: "the hand holding the peg"  # optional; enables lateral slip
 
 instance_selection:
-  # With no clicked opening, peg and holder default to the largest matching instance.
   peg: largest
   holder: largest
   hand: largest
 
 dimensions:
-  # Enter at least one peg dimension. The scale is estimated independently per camera
-  # from the peg minimum-area rectangle in frame 0, where the full peg is visible.
   peg_length_mm: null
   peg_width_mm: null
 
@@ -39,7 +38,6 @@ onset:
 
 tracking:
   min_mask_area_px: 20
-  # Holder origin can remain fixed at t0 because holder and cameras are fixed.
   holder_origin: fixed_t0
 
 visualization:

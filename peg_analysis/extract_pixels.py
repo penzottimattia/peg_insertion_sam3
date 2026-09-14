@@ -2,11 +2,10 @@
 from pathlib import Path
 import json
 import numpy as np
-from .core import demos, detect_gap, group
+from .core import camera_roles, configured_objects, demos, detect_gap, group
 from .analyze import load_saved_masks
 
 OBJECTS = ("peg", "holder", "hand")
-ROLES = ("main", "secondary")
 
 
 def _resolve_demo(h5, demo):
@@ -80,8 +79,8 @@ def _extract_demo_pixels(c, demo, frame_indices, source="segmented", output_dir=
     runner=None
     with h5py.File(c["dataset_path"], "r") as h5:
         demo=_resolve_demo(h5, demo)
-        for role in ROLES:
-            camera=group(h5, demo, c[f"{role}_camera_serial"])
+        for role, serial in camera_roles(c):
+            camera=group(h5, demo, serial)
             indices = (
                 _automatic_frames(camera["host_timestamp_ns"][:], c["onset"])
                 if frame_indices is None
@@ -90,9 +89,8 @@ def _extract_demo_pixels(c, demo, frame_indices, source="segmented", output_dir=
             masks=None
             if source == "segmented":
                 masks, _ = load_saved_masks(c["output_dir"], demo, role)
-                missing=set(OBJECTS)-set(masks)
-                if missing:
-                    raise ValueError(f"Saved masks for {demo}/{role} are missing: {', '.join(sorted(missing))}")
+                if "peg" not in masks:
+                    raise ValueError(f"Saved masks for {demo}/{role} are missing peg")
             else:
                 if runner is None:
                     from .sam3_runner import Runner
@@ -101,14 +99,16 @@ def _extract_demo_pixels(c, demo, frame_indices, source="segmented", output_dir=
                 frame=np.asarray(camera["rgb"][i])
                 frame_masks = {}
                 object_counts = {}
-                for name in OBJECTS:
+                objects = configured_objects(c, role)
+                for name in objects:
                     if masks is None:
                         mask, _ = runner.prompt_image(
-                            frame, c["text_prompts"][role][name],
+                            frame, objects[name],
                             destination/"work"/demo/role/f"frame_{i:06d}"/name,
                         )
                     else:
-                        mask = masks[name][i]
+                        sequence = masks.get(name)
+                        mask = sequence[i] if sequence is not None else None
                     frame_masks[name] = mask
                     object_counts[name] = int(np.asarray(mask, dtype=bool).sum()) if mask is not None else 0
                 out=destination/demo/role/f"frame_{i:06d}.png"

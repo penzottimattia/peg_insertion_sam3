@@ -254,11 +254,11 @@ def main():
 
     if a.command == 'inspect':
         import h5py
-        from .core import demos, group, detect_gap
+        from .core import camera_roles, demos, group, detect_gap
         with h5py.File(c['dataset_path'], 'r') as h:
             for d in demos(h):
                 print(d)
-                for role, serial in [('main', c['main_camera_serial']), ('secondary', c['secondary_camera_serial'])]:
+                for role, serial in camera_roles(c):
                     g = group(h, d, serial)
                     print(role, len(g['rgb']), detect_gap(
                         g['host_timestamp_ns'][:], c['onset']['gap_mad_multiplier'],
@@ -280,7 +280,11 @@ def main():
         if not 0 < a.alpha <= 1:
             render.error('--alpha must be in (0, 1]')
         from .render import render_demo
-        roles = ('main', 'secondary') if a.role == 'both' else (a.role,)
+        from .core import camera_roles
+        available_roles = tuple(role for role, _ in camera_roles(c))
+        roles = available_roles if a.role == 'both' else (a.role,)
+        if any(role not in available_roles for role in roles):
+            render.error('secondary camera is not configured')
         render_demo(
             c, a.demo, roles=roles, traces=a.traces, alpha=a.alpha,
             output_path=a.output, crop=not a.no_crop,

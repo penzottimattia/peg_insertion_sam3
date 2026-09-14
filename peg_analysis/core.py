@@ -21,11 +21,31 @@ def config(p, dataset_path=None, output_dir=None):
         )
     elif output_dir is not None:
         raise ValueError("output_dir cannot be set without dataset_path")
-    for k in ("dataset_path", "output_dir", "main_camera_serial", "secondary_camera_serial"):
+    for k in ("dataset_path", "output_dir", "main_camera_serial"):
         if not c.get(k) or str(c[k]).startswith("ENTER_"):
             raise ValueError(f"Set {k}")
     return c
 
+
+
+def camera_roles(c):
+    """Return configured camera roles; the secondary camera is optional."""
+    roles = [("main", c["main_camera_serial"])]
+    secondary = c.get("secondary_camera_serial")
+    if secondary and not str(secondary).startswith("ENTER_"):
+        roles.append(("secondary", secondary))
+    return roles
+
+
+def configured_objects(c, role):
+    """Return non-empty prompts for a role. Peg is required; hand/holder are optional."""
+    prompts = {
+        name: text for name, text in (c.get("text_prompts", {}).get(role, {}) or {}).items()
+        if text is not None and str(text).strip()
+    }
+    if "peg" not in prompts:
+        raise ValueError(f"Set text_prompts.{role}.peg")
+    return prompts
 
 def demos(h):
     return sorted(k for k in h["demos"] if k.startswith("demo_") and bool(h["demos"][k].attrs.get("complete", True)))

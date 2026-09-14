@@ -3,7 +3,7 @@ import json
 import cv2
 import h5py
 import numpy as np
-from .core import demos, group, detect_gap
+from .core import camera_roles, configured_objects, demos, group, detect_gap
 from .sam3_runner import Runner
 
 COLORS = {"peg": (255, 70, 70), "holder": (70, 210, 255), "hand": (90, 230, 120)}
@@ -33,12 +33,12 @@ def check_prompts(c, max_demos=1):
         if not selected_demos:
             raise RuntimeError("No complete demonstrations found")
         for demo in selected_demos:
-            for role, serial in (("main", c["main_camera_serial"]), ("secondary", c["secondary_camera_serial"])):
+            for role, serial in camera_roles(c):
                 g = group(h, demo, serial)
                 t0, _, _ = detect_gap(g["host_timestamp_ns"][:], c["onset"]["gap_mad_multiplier"], c["onset"]["gap_nominal_multiplier"])
                 frame = np.asarray(g["rgb"][t0])
                 panels = []
-                for name, text in c["text_prompts"][role].items():
+                for name, text in configured_objects(c, role).items():
                     mask, info = runner.prompt_image(frame, text, out/"work"/demo/role/name)
                     info.update(demo=demo, role=role, frame_index=int(t0), object=name)
                     report.append(info)
