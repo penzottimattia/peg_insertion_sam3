@@ -233,7 +233,17 @@ Each object/frame/camera is stored as a compressed NPZ containing `x`, `y`, and 
 If `--frames` is omitted, the command automatically extracts frame `0`, the handover frame (the last frame before the detected timestamp discontinuity), and the final frame, independently for each camera.
 If `--demo` is omitted, the command processes every complete demonstration. `--demo` can still be supplied to restrict extraction to one demonstration.
 
-The CLI supports `inspect`, `check-prompts`, `segment`, `analyze`, `plot`, `render-demo`, `merge-plot`, and `insert-gap`.
+Export arbitrary CLI-prompted objects directly from the dataset. Prompts are not read from `config.yaml`; pass them as a list to `--prompts NAME=TEXT [NAME=TEXT ...]`. The command processes every complete demo by default, or one demo with `--demo`, and exports the first, last pre-gap, and final frame for every camera:
+
+```bash
+peg-analysis -c config.yaml export-objects \
+  --dataset-path /path/to/dataset.h5 \
+  --prompts peg="the red cylinder" holder="the white cylinder"
+```
+
+Restrict the export with `--demo 2` and/or repeated `--camera-serial SERIAL`. Each prompt is run independently on each selected key frame. For each keyframe, all prompted masks are merged by union into one transparent PNG containing the original RGB pixels. `manifest.json` records frame metadata, the union pixel count, and per-object prompts, match status, pixel counts, and SAM metadata. The YAML file is used only for SAM runtime and timestamp-gap detection settings.
+
+The CLI supports `inspect`, `check-prompts`, `segment`, `analyze`, `plot`, `render-demo`, `merge-plot`, and `export-objects`, and `insert-gap`.
 
 ## Metrics
 

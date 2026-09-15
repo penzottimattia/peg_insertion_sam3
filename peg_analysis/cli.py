@@ -87,6 +87,25 @@ def main():
     pixels.add_argument('--frames', nargs='+', type=int, metavar='N', help='Frame indices to extract; omit for first, handover (last pre-gap), and last')
     pixels.add_argument('-o', '--output-dir', help='Destination directory (default: <analysis>/pixels or <dataset>_pixels)')
 
+    export = sub.add_parser(
+        'export-objects',
+        help='Export CLI-prompted objects from first, pre-gap, and last frames',
+    )
+    export.add_argument('--dataset-path', required=True, help='Input HDF5 dataset')
+    export.add_argument(
+        '--prompts', nargs='+', required=True, metavar='NAME=TEXT',
+        help='One or more object prompts as NAME=TEXT',
+    )
+    export.add_argument('--demo', help='Demo name or numeric index; omit for all complete demos')
+    export.add_argument(
+        '--camera-serial', action='append',
+        help='Camera serial to export; repeat as needed, omit for every camera in each demo',
+    )
+    export.add_argument(
+        '-o', '--output-dir',
+        help='Destination directory (default: <dataset>_object_export)',
+    )
+
     ana = sub.add_parser('analyze', help='Compute metrics from saved masks')
     _add_input_dir(
         ana,
@@ -183,6 +202,20 @@ def main():
                              help='Modify the source dataset instead of creating a copy')
 
     a = p.parse_args()
+
+    if a.command == 'export-objects':
+        from .export_objects import export_objects
+        # Prompts and camera selection are intentionally CLI-owned. The YAML is
+        # used only for SAM runtime and timestamp-gap detection settings.
+        c = config(a.config, dataset_path=a.dataset_path)
+        try:
+            export_objects(
+                c, a.prompts, requested_demo=a.demo,
+                camera_serials=a.camera_serial, output_dir=a.output_dir,
+            )
+        except ValueError as exc:
+            export.error(str(exc))
+        return
 
     if a.command == 'extract-pixels':
         from .extract_pixels import extract_pixels
