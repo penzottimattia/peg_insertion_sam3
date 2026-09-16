@@ -439,3 +439,144 @@ def test_linear_analysis_line_width_controls_fit(tmp_path, monkeypatch):
     monkeypatch.setattr(matplotlib.axes.Axes, "plot", recording_plot)
     cumulative_plots(spec, tmp_path / "out")
     assert widths and all(width == 3.25 for width in widths)
+
+
+def test_jitter_and_synthetic_config_are_loaded(tmp_path):
+    from peg_analysis.cumulative import load_cumulative_config
+    spec = tmp_path / "spec.json"
+    spec.write_text(json.dumps({
+        "x_jitter": 0.2, "synthetic_n": 3, "synthetic_seed": 7,
+        "methods": [{"name": "a"}],
+        "datasets": [{"method": "a", "tolerance": 1.0, "data_dirs": ["run"],
+                      "x_jitter": 0.05, "synthetic_n": 2}],
+    }))
+    cfg = load_cumulative_config(spec)
+    assert cfg["x_jitter"] == 0.2 and cfg["synthetic_n"] == 3 and cfg["synthetic_seed"] == 7
+    assert cfg["datasets"][0]["x_jitter"] == 0.05
+    assert cfg["datasets"][0]["synthetic_n"] == 2
+
+
+def test_synthetic_n_adds_bootstrapped_rows(tmp_path):
+    import pandas as pd
+    from peg_analysis.cumulative import cumulative_plots
+    run = tmp_path / "run"
+    _summary(run, [10.0, 20.0])
+    spec = tmp_path / "spec.json"
+    spec.write_text(json.dumps({
+        "synthetic_n": 3, "synthetic_seed": 4,
+        "methods": [{"name": "a"}],
+        "datasets": [{"method": "a", "tolerance": 1.0, "data_dirs": ["run"]}],
+    }))
+    destination = tmp_path / "out"
+    cumulative_plots(spec, destination)
+    data = pd.read_csv(destination / "cumulative_trials.csv")
+    assert len(data) == 5
+    assert data.synthetic.sum() == 3
+    assert set(data.loc[data.synthetic, "max_insertion_depth_mm"]) <= {10.0, 20.0}
+
+
+
+def test_jitter_resamples_within_normalized_bounds_and_is_consistent_across_panes(tmp_path, monkeypatch):
+    import matplotlib.axes
+    import numpy as np
+    import pandas as pd
+    from peg_analysis.cumulative import cumulative_plots
+    run = tmp_path / "run"
+    _summary(run, [10.0, 20.0])
+    frame = pd.read_csv(run / "summary.csv")
+    frame["initial_angular_error_deg"] = [1.0, 2.0]
+    frame.to_csv(run / "summary.csv", index=False)
+    spec = tmp_path / "spec.json"
+    spec.write_text(json.dumps({
+        "normalization_type": "max", "x_jitter": 0.5,
+        "methods": [{"name": "a"}],
+        "datasets": [{"method": "a", "tolerance": 1.0, "data_dirs": ["run"]}],
+    }))
+    seen = []
+    original = matplotlib.axes.Axes.scatter
+    def recording(self, x, y, *args, **kwargs):
+        if len(x) == 1:
+            seen.append((self, float(x[0])))
+        return original(self, x, y, *args, **kwargs)
+    monkeypatch.setattr(matplotlib.axes.Axes, "scatter", recording)
+    cumulative_plots(spec, tmp_path / "out")
+    # Two trials are drawn in each of the two outcome panes.
+    pane_points = {}
+    for ax, x in seen:
+        pane_points.setdefault(id(ax), []).append(x)
+    panes = list(pane_points.values())[-2:]
+    assert len(panes) == 2 and all(len(xs) == 2 for xs in panes)
+    assert panes[0] == panes[1]
+    assert max(panes[0]) == 1.0
+    assert sum(np.isclose(x, 1.0) for x in panes[0]) == 1
+
+
+def test_jitter_keeps_only_one_x_one_anchor_per_pane_across_methods(tmp_path, monkeypatch):
+    import matplotlib.axes
+    import numpy as np
+    import pandas as pd
+    from peg_analysis.cumulative import cumulative_plots
+    for name, depths in (("a", [10.0, 20.0]), ("b", [12.0, 22.0])):
+        run = tmp_path / name
+        _summary(run, depths)
+        frame = pd.read_csv(run / "summary.csv")
+        frame["initial_angular_error_deg"] = [1.0, 2.0]
+        frame.to_csv(run / "summary.csv", index=False)
+    spec = tmp_path / "spec.json"
+    spec.write_text(json.dumps({
+        "normalization_type": "max", "x_jitter": 0.25,
+        "methods": [{"name": "a"}, {"name": "b"}],
+        "datasets": [
+            {"method": "a", "tolerance": 1.0, "data_dirs": ["a"]},
+            {"method": "b", "tolerance": 1.0, "data_dirs": ["b"]},
+        ],
+    }))
+    seen = []
+    original = matplotlib.axes.Axes.scatter
+    def recording(self, x, y, *args, **kwargs):
+        if len(x) == 1:
+            seen.append((id(self), float(x[0])))
+        return original(self, x, y, *args, **kwargs)
+    monkeypatch.setattr(matplotlib.axes.Axes, "scatter", recording)
+    cumulative_plots(spec, tmp_path / "out")
+    panes = {}
+    for ax_id, x in seen:
+        panes.setdefault(ax_id, []).append(x)
+    scatter_panes = list(panes.values())[-2:]
+    assert len(scatter_panes) == 2
+    for xs in scatter_panes:
+        assert sum(np.isclose(x, 1.0) for x in xs) == 1
+
+
+def test_font_name_and_size_are_loaded(tmp_path):
+    from peg_analysis.cumulative import load_cumulative_config
+    spec = tmp_path / "fonts.json"
+    spec.write_text(json.dumps({
+        "font_name": "serif", "font_size": 14,
+        "methods": [{"name": "a"}],
+        "datasets": [{"method": "a", "tolerance": 1.0, "data_dirs": ["run"]}],
+    }))
+    cfg = load_cumulative_config(spec)
+    assert cfg["font_name"] == "serif"
+    assert cfg["font_size"] == 14.0
+
+
+def test_invalid_font_size_is_rejected(tmp_path):
+    import pytest
+    from peg_analysis.cumulative import load_cumulative_config
+    spec = tmp_path / "fonts.json"
+    spec.write_text(json.dumps({
+        "font_size": 0,
+        "methods": [{"name": "a"}],
+        "datasets": [{"method": "a", "tolerance": 1.0, "data_dirs": ["run"]}],
+    }))
+    with pytest.raises(ValueError, match="font_size must be greater than zero"):
+        load_cumulative_config(spec)
+
+
+def test_cumulative_plot_has_no_hardcoded_font_sizes():
+    import inspect
+    import re
+    import peg_analysis.cumulative as module
+    source = inspect.getsource(module)
+    assert not re.search(r"fontsize\s*=\s*[0-9]", source)

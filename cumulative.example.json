@@ -1,5 +1,7 @@
 {
   "title": "Method comparison across peg tolerances",
+  "font_name": "DejaVu Sans",
+  "font_size": 10,
   "tolerance_label": "Peg tolerance (mm)",
   "insertion_depth_threshold": 20.0,
   "nmax_trials": 10,
@@ -56,5 +58,9 @@
         "/path/to/method_b_tol_1_0_part_2"
       ]
     }
-  ]
+  ],
+  "show_datapoint_ids": true,
+  "shade_failure_region": false,
+  "scatter_summary_bars": true,
+  "scatter_success_failure_bars": true
 }

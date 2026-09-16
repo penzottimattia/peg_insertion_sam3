@@ -54,11 +54,18 @@ def load_cumulative_config(config_path):
         data_dirs = dataset.get("data_dirs")
         if not isinstance(data_dirs, list) or not data_dirs:
             raise ValueError(f"dataset {index} requires a non-empty data_dirs list")
-        normalized_datasets.append({
+        group_entry = {
             "method": method,
             "tolerance": dataset["tolerance"],
             "summaries": [_resolve_summary(path, config_path.parent) for path in data_dirs],
-        })
+        }
+        if dataset.get("x_jitter") is not None:
+            group_entry["x_jitter"] = float(dataset["x_jitter"])
+        if dataset.get("synthetic_n") is not None:
+            group_entry["synthetic_n"] = int(dataset["synthetic_n"])
+            if group_entry["synthetic_n"] < 0:
+                raise ValueError(f"dataset {index} synthetic_n must be at least 0")
+        normalized_datasets.append(group_entry)
 
     normalization_type = raw.get("normalization_type")
     if normalization_type is None:
@@ -75,6 +82,13 @@ def load_cumulative_config(config_path):
         raise ValueError(
             "normalization_scope must be one of: group, tolerance, global"
         )
+
+    font_name = str(raw.get("font_name", "DejaVu Sans")).strip()
+    if not font_name:
+        raise ValueError("font_name must be a non-empty string")
+    font_size = float(raw.get("font_size", 10.0))
+    if not np.isfinite(font_size) or font_size <= 0.0:
+        raise ValueError("font_size must be greater than zero")
 
     linear_raw = raw.get("linear_analysis", True)
     if isinstance(linear_raw, bool):
@@ -121,6 +135,15 @@ def load_cumulative_config(config_path):
         "normalization_type": normalization_type,
         "normalization_scope": normalization_scope,
         "linear_analysis": linear_analysis,
+        "font_name": font_name,
+        "font_size": font_size,
+        "show_datapoint_ids": bool(raw.get("show_datapoint_ids", True)),
+        "shade_failure_region": bool(raw.get("shade_failure_region", False)),
+        "scatter_summary_bars": bool(raw.get("scatter_summary_bars", True)),
+        "scatter_success_failure_bars": bool(raw.get("scatter_success_failure_bars", True)),
+        "x_jitter": float(raw.get("x_jitter", 0.0)),
+        "synthetic_n": int(raw.get("synthetic_n", 0)),
+        "synthetic_seed": int(raw.get("synthetic_seed", 0)),
     }
 
 
@@ -144,12 +167,26 @@ def _load_trials(config):
             frame.insert(0, "part", part_index)
             frame.insert(0, "tolerance", group["tolerance"])
             frame.insert(0, "method", group["method"])
+            frame["x_jitter"] = float(group.get("x_jitter", config["x_jitter"]))
+            frame["synthetic"] = False
+            synthetic_n = int(group.get("synthetic_n", config["synthetic_n"]))
+            if synthetic_n < 0:
+                raise ValueError("synthetic_n must be at least 0")
+            if synthetic_n and len(frame):
+                # Bootstrap existing rows. This preserves the empirical joint distribution
+                # instead of inventing independent outcome combinations.
+                seed = int(config["synthetic_seed"]) + len(frames)
+                rng = np.random.default_rng(seed)
+                synthetic = frame.iloc[rng.integers(0, len(frame), size=synthetic_n)].copy()
+                synthetic["synthetic"] = True
+                synthetic["demo"] = [f"synthetic_{i+1:06d}" for i in range(synthetic_n)]
+                frame = pd.concat([frame, synthetic], ignore_index=True, sort=False)
             frames.append(frame)
     return pd.concat(frames, ignore_index=True, sort=False)
 
 
 def _method_distribution(
-    ax, values, x, color, trial_labels, below_insertion_depth_threshold=None
+    ax, values, x, color, trial_labels, below_insertion_depth_threshold=None, font_size=10.0
 ):
     """Draw one method mean, 95% CI, trial markers, and trial labels."""
     values = np.asarray(values, dtype=float)
@@ -191,13 +228,14 @@ def _method_distribution(
                 edgecolor="white", linewidth=0.55, s=43, zorder=3,
             )
         direction = 1 if order % 2 == 0 else -1
-        ax.annotate(
-            trial_labels[index], xy=(x + offset, value),
-            xytext=(3, direction * 5), textcoords="offset points",
-            color=color, alpha=0.78, fontsize=7,
-            ha="left", va="bottom" if direction > 0 else "top",
-            clip_on=False, zorder=4,
-        )
+        if trial_labels[index]:
+            ax.annotate(
+                trial_labels[index], xy=(x + offset, value),
+                xytext=(3, direction * 5), textcoords="offset points",
+                color=color, alpha=0.78, fontsize=font_size * 0.70,
+                ha="left", va="bottom" if direction > 0 else "top",
+                clip_on=False, zorder=4,
+            )
 
 
 def _linear_analysis(x, y, alpha=0.05):
@@ -270,9 +308,16 @@ def cumulative_plots(
     """
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
 
     config_path = Path(config_path).expanduser().resolve()
     config = load_cumulative_config(config_path)
+
+    # Apply the JSON-configured typography after loading the configuration.
+    plt.rcParams.update({
+        "font.family": config["font_name"],
+        "font.size": config["font_size"],
+    })
     data = _load_trials(config)
     if data.empty:
         raise ValueError("No trials were found in the configured summaries")
@@ -344,8 +389,10 @@ def cumulative_plots(
                     method_data[metric].to_numpy(dtype=float),
                     method_index,
                     colors[method_name],
-                    method_data.trial_label.tolist(),
+                    (method_data.trial_label.tolist() if config["show_datapoint_ids"]
+                     else [""] * len(method_data)),
                     below_threshold,
+                    font_size=config["font_size"],
                 )
             ax.set_xticks(
                 range(len(present_methods)),
@@ -355,10 +402,8 @@ def cumulative_plots(
             ax.set_ylabel(ylabel)
             ax.grid(axis="y", alpha=0.22)
             if column == 0 and config["insertion_depth_threshold"] is not None:
-                ax.axhline(
-                    config["insertion_depth_threshold"], color="0.35",
-                    linestyle="--", linewidth=1.1, alpha=0.75, zorder=0,
-                )
+                threshold_value = config["insertion_depth_threshold"]
+                ax.axhline(threshold_value, color="0.35", linestyle="--", linewidth=1.1, alpha=0.75, zorder=0)
             if row == 0:
                 ax.set_title(short_label)
             if column == 0:
@@ -366,13 +411,36 @@ def cumulative_plots(
                     -0.29, 0.5,
                     f"{config['tolerance_label']}: {tolerance}",
                     transform=ax.transAxes, rotation=90,
-                    ha="center", va="center", fontsize=11, fontweight="bold",
+                    ha="center", va="center", fontsize=config["font_size"] * 1.10, fontweight="bold",
                 )
 
     shared_ymin = min(ax.get_ylim()[0] for ax in axes.flat)
     shared_ymax = max(ax.get_ylim()[1] for ax in axes.flat)
     for ax in axes.flat:
         ax.set_ylim(shared_ymin, shared_ymax)
+    if config["shade_failure_region"] and config["insertion_depth_threshold"] is not None:
+        threshold_value = config["insertion_depth_threshold"]
+        for row in range(len(tolerances)):
+            axes[row, 0].axhspan(
+                shared_ymin, threshold_value, color="0.85", alpha=0.45, zorder=0
+            )
+
+    # Preference arrows at the right of every cumulative outcome pane.
+    for row in range(len(tolerances)):
+        for column in range(len(_METRICS)):
+            ax = axes[row, column]
+            upward = column == 0
+            ax.annotate(
+                "Higher is better" if upward else "Lower is better",
+                xy=(1.035, 0.88 if upward else 0.12),
+                xytext=(1.035, 0.62 if upward else 0.38),
+                xycoords="axes fraction", textcoords="axes fraction",
+                ha="center", va="center", rotation=90,
+                fontsize=config["font_size"] * 0.78, color="0.35",
+                arrowprops=dict(arrowstyle="-|>", color="0.35", linewidth=1.2,
+                                shrinkA=0, shrinkB=0, connectionstyle="arc3,rad=0"),
+                annotation_clip=False,
+            )
 
     legend_handles = [
         Line2D(
@@ -385,6 +453,12 @@ def cumulative_plots(
         handles=legend_handles, loc="upper center", ncol=len(method_names),
         bbox_to_anchor=(0.5, 1.01), frameon=False,
     )
+    marker_handles = [
+        Line2D([0], [0], marker="o", linestyle="None", color="0.35", markersize=6, label="Success"),
+        Line2D([0], [0], marker="x", linestyle="None", color="0.35", markersize=7, markeredgewidth=1.5, label="Failure"),
+    ]
+    figure.legend(handles=marker_handles, loc="upper left", ncol=2,
+                  bbox_to_anchor=(0.01, 1.01), frameon=False, columnspacing=1.0, handletextpad=0.4)
     if config["title"]:
         figure.suptitle(str(config["title"]), y=1.055)
     figure.tight_layout(rect=(0.03, 0, 1, 0.96))
@@ -450,11 +524,40 @@ def cumulative_plots(
         ("max_insertion_depth_mm", "Maximum insertion depth (mm)", True),
         ("max_abs_axial_slip_mm", "Maximum absolute axial slip (mm)", False),
     )
-    scatter_figure, scatter_axes = plt.subplots(
-        len(scatter_metrics), len(tolerances),
-        figsize=(5.2 * len(tolerances), 4.0 * len(scatter_metrics)),
-        squeeze=False, sharex=True, sharey=True,
-    )
+    # Interleave narrow summary axes between scatter panes. Each summary axis
+    # shows method means and 95% CIs for the same tolerance/outcome row.
+    show_summary_bars = config["scatter_summary_bars"] and len(tolerances) > 1
+    if show_summary_bars:
+        width_ratios = []
+        for column in range(len(tolerances)):
+            width_ratios.extend([1.0, 0.18])
+        scatter_figure = plt.figure(
+            figsize=(5.5 * len(tolerances), 4.0 * len(scatter_metrics))
+        )
+        scatter_grid = scatter_figure.add_gridspec(
+            len(scatter_metrics), len(width_ratios), width_ratios=width_ratios,
+            wspace=0.16, hspace=0.24,
+        )
+        scatter_axes = np.empty((len(scatter_metrics), len(tolerances)), dtype=object)
+        summary_axes = np.empty((len(scatter_metrics), len(tolerances)), dtype=object)
+        for row in range(len(scatter_metrics)):
+            for column in range(len(tolerances)):
+                share_ax = scatter_axes[0, 0] if (row or column) else None
+                scatter_axes[row, column] = scatter_figure.add_subplot(
+                    scatter_grid[row, 2 * column],
+                    sharex=share_ax, sharey=share_ax,
+                )
+                summary_axes[row, column] = scatter_figure.add_subplot(
+                    scatter_grid[row, 2 * column + 1],
+                    sharey=scatter_axes[0, 0],
+                )
+    else:
+        scatter_figure, scatter_axes = plt.subplots(
+            len(scatter_metrics), len(tolerances),
+            figsize=(5.2 * len(tolerances), 4.0 * len(scatter_metrics)),
+            squeeze=False, sharex=True, sharey=True,
+        )
+        summary_axes = None
     threshold = config["insertion_depth_threshold"]
     angle_labels = {
         "none": "Initial angular error (deg)",
@@ -493,18 +596,49 @@ def cumulative_plots(
                         if selected_normalization != "none"
                         else float(trial.initial_angular_error_deg)
                     )
+                    jitter = float(trial.get("x_jitter", config["x_jitter"]))
+                    if jitter:
+                        # A trial gets one deterministic jitter draw for its method/tolerance
+                        # group. Reusing it across outcome panes keeps corresponding points
+                        # horizontally aligned. For bounded normalizations, reject and
+                        # resample draws that would leave the normalized domain.
+                        jitter_seed = sum(ord(ch) for ch in str(trial.trial_label))
+                        jitter_seed += 1009 * sum(ord(ch) for ch in str(method_name))
+                        jitter_seed += 9176 * sum(ord(ch) for ch in str(tolerance))
+                        rng = np.random.default_rng(jitter_seed)
+                        lower = 0.0 if selected_normalization == "minmax" else -np.inf
+                        upper = 1.0 if selected_normalization in {"max", "minmax"} else np.inf
+                        # Preserve exactly one normalized endpoint per pane at x=1.
+                        # The anchor is selected across all methods in this tolerance/pane;
+                        # other points, including other group maxima, remain jittered.
+                        pane_anchor = None
+                        if upper == 1.0:
+                            pane_candidates = tolerance_data[np.isclose(
+                                tolerance_data["normalized_initial_angular_error"].to_numpy(dtype=float), 1.0
+                            )]
+                            if len(pane_candidates):
+                                pane_anchor = pane_candidates.index[0]
+                        if pane_anchor is not None and trial.name == pane_anchor:
+                            angle_value = 1.0
+                        else:
+                            while True:
+                                jittered_angle = angle_value + rng.uniform(-jitter, jitter)
+                                if lower <= jittered_angle <= upper:
+                                    angle_value = jittered_angle
+                                    break
                     outcome_value = float(trial[scatter_metric])
                     if not np.isfinite(angle_value) or not np.isfinite(outcome_value):
                         continue
                     ax.scatter([angle_value], [outcome_value], **scatter_kwargs)
                     direction = 1 if order % 2 == 0 else -1
-                    ax.annotate(
-                        trial.trial_label, xy=(angle_value, outcome_value),
-                        xytext=(4, direction * 5), textcoords="offset points",
-                        color=colors[method_name], alpha=0.78, fontsize=7,
-                        ha="left", va="bottom" if direction > 0 else "top",
-                        clip_on=False, zorder=4,
-                    )
+                    if config["show_datapoint_ids"]:
+                        ax.annotate(
+                            trial.trial_label, xy=(angle_value, outcome_value),
+                            xytext=(4, direction * 5), textcoords="offset points",
+                            color=colors[method_name], alpha=0.78, fontsize=config["font_size"] * 0.70,
+                            ha="left", va="bottom" if direction > 0 else "top",
+                            clip_on=False, zorder=4,
+                        )
                 x_values = method_data["normalized_initial_angular_error"].to_numpy(dtype=float)
                 y_values = method_data[scatter_metric].to_numpy(dtype=float)
                 stats = _linear_analysis(x_values, y_values, linear_config["alpha"])
@@ -540,13 +674,13 @@ def cumulative_plots(
                     statistics_y = 0.02 if row == 0 else 0.98
                     statistics_va = "bottom" if row == 0 else "top"
                     ax.text(0.02, statistics_y, "\n".join(annotations), transform=ax.transAxes,
-                            ha="left", va=statistics_va, fontsize=7.5,
+                            ha="left", va=statistics_va, fontsize=config["font_size"] * 0.75,
                             bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.82, edgecolor="0.75"),
                             zorder=8)
             if show_threshold and threshold is not None:
                 ax.axhline(
                     threshold, color="0.35", linestyle="--", linewidth=1.1,
-                    alpha=0.75, zorder=0,
+                    alpha=0.75, zorder=1,
                 )
             if row == 0:
                 ax.set_title(f"{config['tolerance_label']}: {tolerance}")
@@ -555,11 +689,160 @@ def cumulative_plots(
             if column == 0:
                 ax.set_ylabel(ylabel)
             ax.grid(alpha=0.22)
+            upward = scatter_metric == "max_insertion_depth_mm"
+            ax.annotate(
+                "Higher is better" if upward else "Lower is better",
+                xy=(1.035, 0.88 if upward else 0.12),
+                xytext=(1.035, 0.62 if upward else 0.38),
+                xycoords="axes fraction", textcoords="axes fraction",
+                ha="center", va="center", rotation=90,
+                fontsize=config["font_size"] * 0.78, color="0.35",
+                arrowprops=dict(arrowstyle="-|>", color="0.35", linewidth=1.2,
+                                shrinkA=0, shrinkB=0, connectionstyle="arc3,rad=0"),
+                annotation_clip=False,
+            )
+    if show_summary_bars:
+        for row, (scatter_metric, _, _) in enumerate(scatter_metrics):
+            for column in range(len(tolerances)):
+                sax = summary_axes[row, column]
+                # Summarize the tolerance immediately to the left of this mini-axis.
+                tolerance = tolerances[column]
+                tolerance_data = plotted_data[
+                    plotted_data["tolerance"].astype(str) == str(tolerance)
+                ]
+                present_methods = [
+                    name for name in method_names
+                    if (tolerance_data.method == name).any()
+                ]
+                # Use the full configured method slots even when some methods are absent.
+                # This keeps the displayed bar width identical across every mini-panel.
+                positions = np.arange(len(method_names), dtype=float)
+                method_positions = {name: float(i) for i, name in enumerate(method_names)}
+                for method_name in present_methods:
+                    position = method_positions[method_name]
+                    values = tolerance_data.loc[
+                        tolerance_data.method == method_name, scatter_metric
+                    ].to_numpy(dtype=float)
+                    mean, ci = _mean_ci95(values)
+                    if np.isfinite(mean):
+                        sax.bar(
+                            [position], [mean], width=0.68,
+                            color=colors[method_name], alpha=0.28,
+                            edgecolor=colors[method_name], linewidth=1.0, zorder=2,
+                        )
+                        sax.errorbar(
+                            [position], [mean], yerr=[ci], fmt="none",
+                            ecolor=colors[method_name], elinewidth=1.1,
+                            capsize=2.5, zorder=3,
+                        )
+                sax.set_xlim(-0.65, max(len(method_names) - 0.35, 0.65))
+                sax.set_xticks([])
+                sax.tick_params(axis="y", left=False, labelleft=False)
+                sax.grid(axis="y", alpha=0.16)
+                for side in ("top", "right", "bottom"):
+                    sax.spines[side].set_visible(False)
+                sax.spines["left"].set_alpha(0.25)
+
+    if config["scatter_success_failure_bars"]:
+        # Compact horizontal success/failure composition below every scatter pane.
+        # Counts are based on the same insertion-depth threshold used for marker shape.
+        for column, tolerance in enumerate(tolerances):
+            tolerance_data = plotted_data[
+                plotted_data["tolerance"].astype(str) == str(tolerance)
+            ]
+            # Draw one composition bar per tolerance in the vertical gap between rows.
+            # Anchor it to the upper-row scatter axis and place it just below that pane.
+            ax = scatter_axes[0, column]
+            inset = ax.inset_axes([0.0, -0.185, 1.0, 0.072], transform=ax.transAxes)
+            left = 0.0
+            total = max(len(tolerance_data), 1)
+            for method_name in method_names:
+                method_data = tolerance_data[tolerance_data.method == method_name]
+                if not len(method_data):
+                    continue
+                if threshold is None:
+                    success_count = len(method_data)
+                    failure_count = 0
+                else:
+                    failed = (
+                        method_data["max_insertion_depth_mm"].to_numpy(dtype=float) < threshold
+                    )
+                    failure_count = int(failed.sum())
+                    success_count = int(len(failed) - failure_count)
+                # Each method occupies a segment proportional to its trial count.
+                method_width = len(method_data) / total
+                success_width = method_width * success_count / len(method_data)
+                failure_width = method_width * failure_count / len(method_data)
+                if success_width > 0:
+                    success_left = left
+                    inset.barh(0, success_width, left=success_left, height=0.92,
+                               color=colors[method_name], alpha=0.80, linewidth=0)
+                    if success_width >= 0.055:
+                        inset.text(success_left + success_width / 2.0, 0, str(success_count),
+                                   ha="center", va="center", color="white",
+                                   fontsize=config["font_size"] * 0.72, fontweight="bold", zorder=6)
+                left += success_width
+                if failure_width > 0:
+                    failure_left = left
+                    inset.barh(0, failure_width, left=failure_left, height=0.92,
+                               facecolor="white", edgecolor=colors[method_name],
+                               hatch="///", linewidth=1.0)
+                    if failure_width >= 0.055:
+                        inset.text(failure_left + failure_width / 2.0, 0, str(failure_count),
+                                   ha="center", va="center", color=colors[method_name],
+                                   fontsize=config["font_size"] * 0.74, fontweight="bold", zorder=7,
+                                   bbox=dict(boxstyle="round,pad=0.06", facecolor="white",
+                                             edgecolor="none", alpha=0.92))
+                left += failure_width
+            inset.set_xlim(0.0, 1.0)
+            inset.set_ylim(-0.6, 0.6)
+            inset.set_xticks([])
+            inset.set_yticks([])
+            inset.set_facecolor("none")
+            for spine in inset.spines.values():
+                spine.set_visible(False)
+
+    # Add failure shading only after scatter limits have been established so it cannot
+    # expand the shared y-axis. The patch is clipped to the existing depth-row limits.
+    if config["shade_failure_region"] and threshold is not None:
+        depth_ymin, depth_ymax = scatter_axes[0, 0].get_ylim()
+        for column in range(len(tolerances)):
+            scatter_axes[0, column].axhspan(
+                depth_ymin, threshold, color="0.85", alpha=0.45, zorder=0
+            )
+        for ax in scatter_axes.flat:
+            ax.set_ylim(depth_ymin, depth_ymax)
+        if show_summary_bars:
+            for ax in summary_axes.flat:
+                ax.set_ylim(depth_ymin, depth_ymax)
+
     scatter_figure.legend(
         handles=legend_handles, loc="upper center", ncol=len(method_names),
         bbox_to_anchor=(0.5, 1.01), frameon=False,
     )
-    scatter_figure.tight_layout(rect=(0, 0, 1, 0.96))
+    marker_handles = [
+        Line2D([0], [0], marker="o", linestyle="None", color="0.35", markersize=6, label="Success"),
+        Line2D([0], [0], marker="x", linestyle="None", color="0.35", markersize=7, markeredgewidth=1.5, label="Failure"),
+    ]
+    scatter_figure.legend(
+        handles=marker_handles, loc="upper left", ncol=2,
+        bbox_to_anchor=(0.01, 1.01), frameon=False, columnspacing=1.0, handletextpad=0.4,
+    )
+    if config["scatter_success_failure_bars"]:
+        composition_handles = [
+            Patch(facecolor="0.45", edgecolor="none", alpha=0.80, label="Success share"),
+            Patch(facecolor="white", edgecolor="0.45", hatch="///", label="Failure share"),
+        ]
+        scatter_figure.legend(
+            handles=composition_handles, loc="upper right", ncol=2,
+            bbox_to_anchor=(0.99, 1.01), frameon=False,
+            columnspacing=0.9, handletextpad=0.4,
+            fontsize=config["font_size"] * 0.78,
+        )
+    if show_summary_bars:
+        scatter_figure.subplots_adjust(left=0.06, right=0.985, bottom=0.10, top=0.90)
+    else:
+        scatter_figure.tight_layout(rect=(0, 0, 1, 0.96))
     scatter_path = output_dir / "initial_angle_vs_outcomes_by_tolerance.png"
     scatter_figure.savefig(scatter_path, dpi=200, bbox_inches="tight")
     plt.close(scatter_figure)

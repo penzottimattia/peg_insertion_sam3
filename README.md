@@ -565,6 +565,14 @@ python -m pip install -c constraints.txt -r requirements-sam3-runtime.txt
 python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"
 ```
 
+If `torch.cuda.is_available()` is false, install a PyTorch wheel compatible with the installed NVIDIA driver and CUDA support. The verification script reports the detected PyTorch and CUDA state.
+
+
+## Cumulative method comparison
+
+Use a JSON specification to compare multiple methods across tolerance levels. Set top-level `font_name` and `font_size` values to control the Matplotlib font family and base font size for all cumulative plots. Each figure row is one tolerance. The three columns show insertion depth, axial slip, and lateral slip using the existing distribution style: method-colored mean bars, 95% confidence intervals, individual trial markers, and short trial labels. The complete figure uses one shared y-axis range so all outcomes and tolerance rows are directly comparable.
+
+Copy and edit the included example:
 If `torch.cuda.is_available()` is false, install a PyTorch wheel compatible with the installed NVIDIA driver and required CUDA runtime.
 
 ### No or multiple timestamp gaps
@@ -623,3 +631,80 @@ Pixel outputs remain available when a physical dimension is absent.
 ├── pyproject.toml
 └── README.md
 ```
+```json
+"normalization_type": "zscore",
+"normalization_scope": "group"
+```
+
+`normalization_scope` controls which selected trials provide the normalization statistics: `"group"` uses each method/tolerance pair independently, `"tolerance"` pools methods within each tolerance, and `"global"` pools all methods and tolerances. The default is `"group"`.
+
+Supported normalization values are:
+
+- `"none"`: raw initial angular error in degrees.
+- `"max"`: divide by the maximum absolute initial angle within each method and tolerance pair.
+- `"minmax"`: map the minimum and maximum initial angles within each method and tolerance pair to 0 and 1.
+- `"zscore"`: subtract the group mean and divide by the population standard deviation within each method and tolerance pair.
+
+Normalization uses only trials selected after applying per-method, per-tolerance `nmax_trials`. For constant groups, the scale safely falls back to `1.0`, so min-max values and z-scores are zero. `plotted_trials.csv` records `angle_normalization_type`, `initial_angular_error_group_mean_deg`, `initial_angular_error_group_min_deg`, `initial_angular_error_group_max_deg`, `initial_angular_error_group_scale_deg`, and `normalized_initial_angular_error`. Override the JSON for one run with `--normalization-type none`, `max`, `minmax`, or `zscore`. The legacy `normalized_angle: true` setting is still accepted and maps to `"max"`.
+
+
+Configure per-group linear analysis for both angle-outcome scatter rows:
+
+```json
+"linear_analysis": {
+  "enabled": true,
+  "show_fit": true,
+  "show_statistics": true,
+  "confidence_band": false,
+  "alpha": 0.05,
+  "line_width": 1.8
+}
+```
+
+For every method/tolerance group, the scatter figure draws an optional least-squares fit. Set `line_width` to control the fitted-line thickness. It reports `n`, Pearson's `r`, the two-sided p-value, and `R²`. The command also writes `linear_correlations.csv` with the slope, intercept, standard errors, normalization settings, and a cautious interpretation. Groups with fewer than three finite pairs or constant input/output values are recorded as unavailable rather than assigned misleading statistics. Set `linear_analysis` to `false` to hide fits and annotations while still exporting the numerical analysis.
+
+Control horizontal jitter in the angle-outcome scatter plots with a top-level value (in current x-axis units):
+
+```json
+"x_jitter": 0.03
+```
+
+A dataset entry may override it with its own `"x_jitter"`. Jitter is deterministic per trial within each method/tolerance group and the same offset is reused across outcome panes. For bounded `max`/`minmax` normalized axes, exactly one normalized maximum per tolerance/outcome pane remains at `x=1`; all other out-of-domain jitter draws are rejected and resampled rather than clamped. Jitter affects only displayed scatter x positions, not normalization or linear statistics.
+
+Optionally bootstrap synthetic trial points from each dataset with `"synthetic_n"` (global or per dataset). `"synthetic_seed"` controls reproducibility. Synthetic rows are marked by a `synthetic` column and receive `synthetic_XXXXXX` demo names. The bootstrap resamples complete observed rows, preserving relationships among the recorded metrics. Use `0` to disable it.
+
+Set the optional maximum number of plotted trials at the top level:
+
+```json
+"nmax_trials": 10
+```
+
+For every method at every tolerance, this independently selects the N trials with the greatest `max_insertion_depth_mm`. For example, with two methods, three tolerances, and `nmax_trials: 10`, the figure can include up to 60 trials. The CLI option `--nmax-trials` overrides the JSON value for one run. Omit the setting or use `null` to plot all trials.
+
+Set the optional top-level failure threshold in millimetres:
+
+```json
+"insertion_depth_threshold": 20.0
+```
+
+A trial whose `max_insertion_depth_mm` is below this threshold is drawn with an `x` marker in every outcome panel. Trials meeting the threshold retain circular markers. Omit the setting or use `null` to disable failure markers. Within each tolerance row, only methods that actually have data are shown on the x-axis; if one method is present, that row has one method label.
+
+## Optional secondary camera and hand tracking
+
+Only `main_camera_serial` and `text_prompts.main.peg` are required. To run on a
+single-camera dataset, omit `secondary_camera_serial` (or set it to `null`) and
+the `text_prompts.secondary` section may also be omitted.
+
+The `hand` prompt is optional independently for each configured camera. When it
+is absent, segmentation and analysis still produce peg-based insertion depth
+and angular metrics. Hand-derived outputs are left missing rather than causing
+the demonstration to fail:
+
+- main hand absent: axial-slip values and validity are missing/false;
+- secondary hand absent: lateral-slip values and validity are missing/false;
+- secondary camera absent: all secondary-camera and lateral-slip summary values
+  are missing, while main-camera analysis continues normally.
+
+The `holder` prompt is also optional because the current metrics do not depend
+on it. Existing configurations that provide both cameras and all three prompts
+retain their previous behavior.
