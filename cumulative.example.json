@@ -71,6 +71,7 @@
     "truncate_at_max_depth": false,
     "group_by_tolerance": true,
     "highlight_early_seconds": 0.0,
-    "anomalous_depth_mm": null
+    "anomalous_depth_mm": null,
+    "dataset_fps": 30.0
   }
 }

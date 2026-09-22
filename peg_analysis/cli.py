@@ -192,7 +192,8 @@ def main():
     selection.add_argument('--first-n', type=int, default=None, help='Use the first N trials in summary.csv order')
     selection.add_argument('--last-n', type=int, default=None, help='Use the last N trials in summary.csv order')
     dir_gallery.add_argument('-o', '--output', help='Output MP4 path (default: <input-dir>/gallery.mp4)')
-    dir_gallery.add_argument('--fps', type=float, default=None, help='Output video FPS (default: 24)')
+    dir_gallery.add_argument('--fps', type=float, default=None, help='Export video FPS')
+    dir_gallery.add_argument('--dataset-fps', type=float, default=None, help='Recording FPS; overrides video_gallery.dataset_fps')
     dir_gallery.add_argument('--shallow-engagement-depth-mm', type=float, default=None)
     dir_gallery.add_argument('--highlight-early-seconds', type=float, default=None)
     dir_gallery.add_argument('--truncate-at-max-depth', action=argparse.BooleanOptionalAction, default=None)
@@ -276,7 +277,7 @@ def main():
         from .gallery import render_directory_gallery
         render_directory_gallery(
             a.input_dir, spec_path=a.spec, first_n=a.first_n, last_n=a.last_n, output=a.output,
-            fps=a.fps, shallow_depth_mm=a.shallow_engagement_depth_mm,
+            fps=a.fps, dataset_fps=a.dataset_fps, shallow_depth_mm=a.shallow_engagement_depth_mm,
             highlight_early_seconds=a.highlight_early_seconds,
             truncate_at_max_depth=a.truncate_at_max_depth,
             insertion_depth_threshold_mm=a.insertion_depth_threshold,

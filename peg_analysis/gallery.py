@@ -7,6 +7,47 @@ import numpy as np
 from .cumulative import load_cumulative_config
 
 
+
+def _format_video_time(seconds):
+    seconds = max(0, int(round(float(seconds))))
+    minutes, secs = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}" if hours else f"{minutes:02d}:{secs:02d}"
+
+
+def _format_video_time(seconds):
+    seconds = max(0, int(round(float(seconds))))
+    minutes, secs = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}" if hours else f"{minutes:02d}:{secs:02d}"
+
+
+def _recording_time(source_frame_count, dataset_fps):
+    return float(source_frame_count) / float(dataset_fps)
+
+
+def _draw_video_progress(canvas, source_i, total_source_frames, dataset_fps, height=34):
+    """Burn recording wall-clock progress while playback remains accelerated."""
+    import cv2
+    total_source_frames = max(int(total_source_frames), 1)
+    done = min(int(source_i) + 1, total_source_frames)
+    progress = done / total_source_frames
+    total_s = _recording_time(total_source_frames, dataset_fps)
+    elapsed_s = _recording_time(done, dataset_fps)
+    remaining_s = max(total_s - elapsed_s, 0.0)
+    h, w = canvas.shape[:2]
+    y0 = h - height
+    cv2.rectangle(canvas, (0, y0), (w - 1, h - 1), (12, 12, 12), -1)
+    margin, bar_h = 10, 8
+    bar_y = y0 + 5
+    bar_w = max(w - 2 * margin, 1)
+    cv2.rectangle(canvas, (margin, bar_y), (margin + bar_w, bar_y + bar_h), (65, 65, 65), -1)
+    cv2.rectangle(canvas, (margin, bar_y), (margin + round(bar_w * progress), bar_y + bar_h), (230, 230, 230), -1)
+    text = f"Elapsed {_format_video_time(elapsed_s)}    Remaining {_format_video_time(remaining_s)}"
+    cv2.putText(canvas, text, (margin, y0 + 28), cv2.FONT_HERSHEY_SIMPLEX, 0.52,
+                (240, 240, 240), 1, cv2.LINE_AA)
+    return canvas
+
 def _truthy(value):
     if isinstance(value, bool):
         return value
@@ -75,10 +116,10 @@ def _highlight_frame(row, start_frame, last_frame, timestamps=None, early_second
         value = float(value)
     except (TypeError, ValueError):
         value = np.nan
-    if not np.isfinite(value) or int(value) < int(start_frame):
-        return int(last_frame)
-
-    resolved = min(max(int(value), int(start_frame)), int(last_frame))
+    if not np.isfinite(value) or int(value) < int(start_frame) or int(value) > int(last_frame):
+        resolved = int(last_frame)
+    else:
+        resolved = int(value)
     early_seconds = max(float(early_seconds), 0.0)
     if early_seconds <= 0.0 or timestamps is None:
         return resolved
@@ -88,6 +129,37 @@ def _highlight_frame(row, start_frame, last_frame, timestamps=None, early_second
     candidates = np.arange(int(start_frame), resolved + 1, dtype=int)
     eligible = candidates[timestamps[candidates] <= target_ns]
     return int(eligible[-1]) if len(eligible) else int(start_frame)
+
+
+
+def _ensure_visible_highlight(highlight_frame, start_frame, last_frame, early_seconds, dataset_fps, export_fps, fallback):
+    """Keep end/fallback borders visibly on-screen despite accelerated playback.
+
+    The event is still resolved in host-timestamp time first. For fallback/end events,
+    enforce at least ``early_seconds`` of exported playback visibility by moving the
+    source-frame trigger earlier when acceleration would otherwise compress it.
+    """
+    highlight_frame = int(highlight_frame)
+    if not fallback or early_seconds <= 0 or export_fps <= 0:
+        return highlight_frame
+    required_source_frames = int(np.ceil(float(early_seconds) * float(export_fps)))
+    visible_from = int(last_frame) - required_source_frames + 1
+    return max(int(start_frame), min(highlight_frame, visible_from))
+
+
+def _jitter_highlight_host_time(highlight, start, last, timestamps, jitter_seconds):
+    """Shift a highlight by signed host-clock seconds within the displayed interval."""
+    jitter_seconds = float(jitter_seconds)
+    if not np.isfinite(jitter_seconds) or jitter_seconds == 0.0:
+        return int(highlight)
+    timestamps = np.asarray(timestamps, dtype=np.int64)
+    target_ns = int(timestamps[int(highlight)]) + round(jitter_seconds * 1_000_000_000)
+    candidates = np.arange(int(start), int(last) + 1, dtype=int)
+    if jitter_seconds < 0:
+        eligible = candidates[timestamps[candidates] <= target_ns]
+        return int(eligible[-1]) if len(eligible) else int(start)
+    eligible = candidates[timestamps[candidates] >= target_ns]
+    return int(eligible[0]) if len(eligible) else int(last)
 
 
 def _read_trial(row, shallow_depth_mm):
@@ -107,7 +179,22 @@ def _read_trial(row, shallow_depth_mm):
         start = min(max(start, 0), last)
         timestamps = h5[f"demos/{demo}/cameras/{serial}/host_timestamp_ns"][:]
         early_seconds = float(row.get("_gallery_highlight_early_seconds", 0.0))
+        value = row.get("highlight", np.nan)
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            value = np.nan
+        fallback = not np.isfinite(value) or int(value) < int(start) or int(value) > int(last)
         highlight = _highlight_frame(row, start, last, timestamps, early_seconds)
+        dataset_fps = float(row.get("_gallery_dataset_fps", 0.0))
+        export_fps = float(row.get("_gallery_export_fps", 0.0))
+        highlight = _ensure_visible_highlight(
+            highlight, start, last, early_seconds, dataset_fps, export_fps, fallback
+        )
+        highlight = _jitter_highlight_host_time(
+            highlight, start, last, timestamps,
+            row.get("_gallery_highlight_jitter_seconds", 0.0),
+        )
         data = [np.asarray(frames[i], dtype=np.uint8) for i in range(start, last + 1)]
     return data, start, highlight
 
@@ -134,6 +221,78 @@ def _draw_cell(frame, success, highlighted, cell_size):
         t = max(5, round(min(width, height) * 0.018))
         cv2.rectangle(image, (t // 2, t // 2), (width - 1 - t // 2, height - 1 - t // 2), color, t)
     return image
+
+
+def _replace_synthetic_with_nearest_physical(data):
+    """Replace synthetic cumulative rows by the nearest real trial in metric space.
+
+    This preserves the plotted synthetic slot in the video gallery while pointing it
+    to an actual recording. Distance uses standardized available outcome/angle metrics
+    within the same method/tolerance. Ties are resolved by original row order.
+    """
+    import pandas as pd
+    if "synthetic" not in data.columns or not data.synthetic.map(_truthy).any():
+        return data.copy()
+    metrics = [
+        "max_insertion_depth_mm", "max_abs_axial_slip_mm",
+        "max_abs_lateral_slip_mm", "initial_angular_error_deg",
+        "final_angular_error_deg",
+    ]
+    result = data.copy()
+    synthetic_indices = result.index[result.synthetic.map(_truthy)].tolist()
+    physical = result.loc[~result.synthetic.map(_truthy)].copy()
+    for index in synthetic_indices:
+        target = result.loc[index]
+        candidates = physical[
+            (physical.method == target.method)
+            & (physical.tolerance.astype(str) == str(target.tolerance))
+        ]
+        if candidates.empty:
+            raise ValueError(
+                f"No physical trial available for synthetic gallery row {target.get('trial_label', index)} "
+                f"({target.method}, tolerance {target.tolerance})"
+            )
+        usable = []
+        for metric in metrics:
+            if metric not in candidates.columns or metric not in result.columns:
+                continue
+            tv = pd.to_numeric(pd.Series([target.get(metric)]), errors="coerce").iloc[0]
+            cv = pd.to_numeric(candidates[metric], errors="coerce")
+            finite = np.isfinite(cv.to_numpy(dtype=float))
+            if not np.isfinite(tv) or not finite.any():
+                continue
+            values = cv.to_numpy(dtype=float)
+            scale = float(np.nanstd(values[finite]))
+            if not np.isfinite(scale) or scale <= 0:
+                scale = 1.0
+            usable.append(((values - float(tv)) / scale) ** 2)
+        if usable:
+            distance = np.zeros(len(candidates), dtype=float)
+            counts = np.zeros(len(candidates), dtype=int)
+            for component in usable:
+                finite = np.isfinite(component)
+                distance[finite] += component[finite]
+                counts[finite] += 1
+            distance = np.where(counts > 0, np.sqrt(distance / counts), np.inf)
+            nearest_pos = int(np.argmin(distance))
+        else:
+            nearest_pos = 0
+        nearest = candidates.iloc[nearest_pos].copy()
+        synthetic_label = target.get("trial_label", None)
+        for column in result.columns:
+            if column in nearest.index:
+                result.at[index, column] = nearest[column]
+        # Keep the plotted slot label, but make provenance explicit.
+        if "trial_label" in result.columns and synthetic_label is not None:
+            result.at[index, "trial_label"] = synthetic_label
+        result.at[index, "synthetic"] = False
+        result.at[index, "gallery_replaced_synthetic"] = True
+        result.at[index, "gallery_replacement_demo"] = str(nearest["demo"])
+        result.at[index, "gallery_replacement_source_summary"] = str(nearest["source_summary"])
+    if "gallery_replaced_synthetic" not in result.columns:
+        result["gallery_replaced_synthetic"] = False
+    result["gallery_replaced_synthetic"] = result["gallery_replaced_synthetic"].map(_truthy)
+    return result
 
 
 def _fill_group(group, count, rng):
@@ -169,12 +328,16 @@ def render_cumulative_gallery(spec_path, trials_path=None, output_dir=None):
     gallery = raw.get("video_gallery", {}) or {}
     shallow = float(gallery.get("shallow_engagement_depth_mm", 2.0))
     fps = float(gallery.get("fps", 30.0))
+    dataset_fps = float(gallery.get("dataset_fps", fps))
     cell_width = int(gallery.get("cell_width", 320))
     cell_height = int(gallery.get("cell_height", 240))
     seed = int(gallery.get("seed", 0))
     truncate_at_max_depth = bool(gallery.get("truncate_at_max_depth", False))
     group_by_tolerance = bool(gallery.get("group_by_tolerance", True))
     highlight_early_seconds = float(gallery.get("highlight_early_seconds", 0.0))
+    synthetic_highlight_jitter_seconds = float(
+        gallery.get("synthetic_highlight_jitter_seconds", 0.25)
+    )
     anomalous_depth_mm = gallery.get("anomalous_depth_mm")
     anomalous_depth_mm = None if anomalous_depth_mm is None else float(anomalous_depth_mm)
     first_n = gallery.get("first_n")
@@ -184,10 +347,15 @@ def render_cumulative_gallery(spec_path, trials_path=None, output_dir=None):
     slots = int(gallery.get("trials_per_method", 10))
     if slots != 10:
         raise ValueError("video_gallery.trials_per_method must be 10 for the 5x2/2x5 layout")
-    if shallow < 0 or fps <= 0 or cell_width < 32 or cell_height < 32:
-        raise ValueError("Invalid video_gallery shallow depth, fps, or cell dimensions")
+    if shallow < 0 or fps <= 0 or dataset_fps <= 0 or cell_width < 32 or cell_height < 32:
+        raise ValueError("Invalid video_gallery shallow depth, fps, dataset_fps, or cell dimensions")
     if not np.isfinite(highlight_early_seconds) or highlight_early_seconds < 0:
         raise ValueError("video_gallery.highlight_early_seconds must be at least 0")
+    if (not np.isfinite(synthetic_highlight_jitter_seconds)
+            or synthetic_highlight_jitter_seconds < 0):
+        raise ValueError(
+            "video_gallery.synthetic_highlight_jitter_seconds must be at least 0"
+        )
     if anomalous_depth_mm is not None and not np.isfinite(anomalous_depth_mm):
         raise ValueError("video_gallery.anomalous_depth_mm must be finite")
     if first_n is not None and last_n is not None:
@@ -227,9 +395,9 @@ def render_cumulative_gallery(spec_path, trials_path=None, output_dir=None):
             if getattr(match, "ndim", 1) > 1:
                 match = match.iloc[0]
             data.at[index, "highlight"] = match.get("highlight", np.nan)
-    # Synthetic cumulative rows have no physical recording of their own.
-    if "synthetic" in data.columns:
-        data = data.loc[~data.synthetic.map(_truthy)].copy()
+    # Synthetic cumulative rows have no recording. Preserve their gallery slots by
+    # replacing each with the closest physical trial from the same method/tolerance.
+    data = _replace_synthetic_with_nearest_physical(data)
     threshold = cfg["insertion_depth_threshold"]
     if threshold is None:
         raise ValueError("Video gallery requires insertion_depth_threshold to classify success/failure")
@@ -259,6 +427,25 @@ def render_cumulative_gallery(spec_path, trials_path=None, output_dir=None):
             tol = tol[tol.method == unit["method"]].copy()
         tol["_gallery_truncate_at_max_depth"] = truncate_at_max_depth
         tol["_gallery_highlight_early_seconds"] = highlight_early_seconds
+        tol["_gallery_highlight_jitter_seconds"] = 0.0
+        if "gallery_replaced_synthetic" in tol.columns and synthetic_highlight_jitter_seconds > 0:
+            replaced = tol["gallery_replaced_synthetic"].map(_truthy)
+            for row_index in tol.index[replaced]:
+                label = str(
+                    tol.at[row_index, "trial_label"]
+                    if "trial_label" in tol.columns else row_index
+                )
+                deterministic_seed = seed + sum(
+                    (position + 1) * ord(character)
+                    for position, character in enumerate(label)
+                )
+                local_rng = np.random.default_rng(deterministic_seed)
+                tol.at[row_index, "_gallery_highlight_jitter_seconds"] = local_rng.uniform(
+                    -synthetic_highlight_jitter_seconds,
+                    synthetic_highlight_jitter_seconds,
+                )
+        tol["_gallery_dataset_fps"] = dataset_fps
+        tol["_gallery_export_fps"] = fps
         present = [m for m in method_order if (tol.method == m).any()]
         groups = []
         for method in present:
@@ -285,7 +472,8 @@ def render_cumulative_gallery(spec_path, trials_path=None, output_dir=None):
             prepared.append((method, trials))
 
         method_header = 38
-        canvas_size = (total_cols * cell_width, rows * cell_height + method_header)
+        progress_height = 34
+        canvas_size = (total_cols * cell_width, rows * cell_height + method_header + progress_height)
         safe_tol = str(tolerance).replace(".", "_")
         if unit["kind"] == "tolerance":
             path = output_dir / f"gallery_tolerance_{safe_tol}.mp4"
@@ -305,22 +493,24 @@ def render_cumulative_gallery(spec_path, trials_path=None, output_dir=None):
                                 (240, 240, 240), 2, cv2.LINE_AA)
                     for slot, (row, frames, start, highlight, success) in enumerate(trials):
                         rr, cc = divmod(slot, cols_per_group)
-                        idx = min(out_i, len(frames) - 1)  # hold last frame after a shorter trial ends
+                        idx = min(out_i, len(frames) - 1)
                         global_frame = start + idx
                         cell = _draw_cell(frames[idx], success, global_frame >= highlight,
                                           (cell_width, cell_height))
                         y = method_header + rr * cell_height
                         x = x0 + cc * cell_width
                         canvas[y:y + cell_height, x:x + cell_width] = cell
+                _draw_video_progress(canvas, out_i, max_len, dataset_fps, progress_height)
                 writer.write(cv2.cvtColor(canvas, cv2.COLOR_RGB2BGR))
         finally:
             writer.release()
         outputs.append(path)
         manifest.append({
-            "tolerance": tolerance, "file": path.name, "fps": fps,
+            "tolerance": tolerance, "file": path.name, "fps": fps, "dataset_fps": dataset_fps,
             "shallow_engagement_depth_mm": shallow, "insertion_depth_threshold_mm": threshold,
             "truncate_at_max_depth": truncate_at_max_depth,
             "highlight_early_seconds": highlight_early_seconds,
+            "synthetic_highlight_jitter_seconds": synthetic_highlight_jitter_seconds,
             "anomalous_depth_mm": anomalous_depth_mm,
             "first_n": first_n, "last_n": last_n,
             "group_by_tolerance": group_by_tolerance,
@@ -336,7 +526,7 @@ def render_cumulative_gallery(spec_path, trials_path=None, output_dir=None):
     return outputs
 
 def render_directory_gallery(input_dir, spec_path=None, first_n=None, last_n=None, output=None,
-                             fps=None, shallow_depth_mm=None,
+                             fps=None, dataset_fps=None, shallow_depth_mm=None,
                              highlight_early_seconds=None,
                              truncate_at_max_depth=None,
                              insertion_depth_threshold_mm=None,
@@ -364,6 +554,7 @@ def render_directory_gallery(input_dir, spec_path=None, first_n=None, last_n=Non
     first_n = choose(first_n, "first_n", None)
     last_n = choose(last_n, "last_n", None)
     fps = float(choose(fps, "fps", 24.0))
+    dataset_fps = float(choose(dataset_fps, "dataset_fps", fps))
     shallow_depth_mm = float(choose(shallow_depth_mm, "shallow_engagement_depth_mm", 2.0))
     highlight_early_seconds = float(choose(highlight_early_seconds, "highlight_early_seconds", 0.0))
     truncate_at_max_depth = bool(choose(truncate_at_max_depth, "truncate_at_max_depth", False))
@@ -387,8 +578,8 @@ def render_directory_gallery(input_dir, spec_path=None, first_n=None, last_n=Non
     for name, value in (("first_n", first_n), ("last_n", last_n)):
         if value is not None and int(value) < 1:
             raise ValueError(f"{name} must be at least 1")
-    if fps <= 0 or cell_width < 32 or cell_height < 32:
-        raise ValueError("Invalid gallery fps or cell dimensions")
+    if fps <= 0 or dataset_fps <= 0 or cell_width < 32 or cell_height < 32:
+        raise ValueError("Invalid gallery fps, dataset_fps, or cell dimensions")
     if shallow_depth_mm < 0 or highlight_early_seconds < 0:
         raise ValueError("Shallow depth and highlight_early_seconds must be non-negative")
     if anomalous_depth_mm is not None and not np.isfinite(anomalous_depth_mm):
@@ -411,6 +602,8 @@ def render_directory_gallery(input_dir, spec_path=None, first_n=None, last_n=Non
         data["highlight"] = np.nan
     data["_gallery_truncate_at_max_depth"] = bool(truncate_at_max_depth)
     data["_gallery_highlight_early_seconds"] = float(highlight_early_seconds)
+    data["_gallery_dataset_fps"] = float(dataset_fps)
+    data["_gallery_export_fps"] = float(fps)
 
     prepared = []
     max_len = 0
@@ -433,7 +626,8 @@ def render_directory_gallery(input_dir, spec_path=None, first_n=None, last_n=Non
     # Keep the established 5-column visual grammar; additional trials add rows.
     cols = min(5, count)
     rows = int(np.ceil(count / cols))
-    canvas_size = (cols * int(cell_width), rows * int(cell_height))
+    progress_height = 34
+    canvas_size = (cols * int(cell_width), rows * int(cell_height) + progress_height)
     output_path = (Path(output).expanduser().resolve() if output else
                    input_dir / "gallery.mp4")
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -452,6 +646,7 @@ def render_directory_gallery(input_dir, spec_path=None, first_n=None, last_n=Non
                                   (int(cell_width), int(cell_height)))
                 y, x = rr * int(cell_height), cc * int(cell_width)
                 canvas[y:y + int(cell_height), x:x + int(cell_width)] = cell
+            _draw_video_progress(canvas, out_i, max_len, dataset_fps, progress_height)
             writer.write(cv2.cvtColor(canvas, cv2.COLOR_RGB2BGR))
     finally:
         writer.release()
