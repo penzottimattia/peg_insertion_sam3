@@ -4,7 +4,6 @@
   "font_size": 10,
   "tolerance_label": "Peg tolerance (mm)",
   "insertion_depth_threshold": 20.0,
-  "nmax_trials": 10,
   "normalization_type": "zscore",
   "normalization_scope": "group",
   "linear_analysis": {
@@ -62,5 +61,16 @@
   "show_datapoint_ids": true,
   "shade_failure_region": false,
   "scatter_summary_bars": true,
-  "scatter_success_failure_bars": true
+  "scatter_success_failure_bars": true,
+  "video_gallery": {
+    "shallow_engagement_depth_mm": 2.0,
+    "fps": 30.0,
+    "cell_width": 320,
+    "cell_height": 240,
+    "seed": 0,
+    "truncate_at_max_depth": false,
+    "group_by_tolerance": true,
+    "highlight_early_seconds": 0.0,
+    "anomalous_depth_mm": null
+  }
 }

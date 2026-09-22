@@ -392,11 +392,8 @@ Each prompt is run independently on the first, last pre-gap, and final frame. On
 ```bash
 peg-analysis merge-plot run_a run_b \
   -o merged_plots \
-  --nmax-trials 10 \
   --insertion-depth-threshold 20
 ```
-
-`merged_summary.csv` always retains all trials. When `--nmax-trials` is used, the figures, `plotted_summary.csv`, and `trial_key.csv` contain only the globally selected trials with the greatest maximum insertion depth.
 
 ### Compare methods across tolerances
 
@@ -427,7 +424,6 @@ Relative paths are resolved from the JSON specification directory. Important top
 ```json
 {
   "insertion_depth_threshold": 20.0,
-  "nmax_trials": 10,
   "normalization_type": "zscore",
   "normalization_scope": "group",
   "linear_analysis": {
@@ -454,7 +450,7 @@ Supported normalization scopes are:
 - `tolerance`: pool methods within each tolerance
 - `global`: pool all selected trials
 
-Normalization statistics are computed after the optional top-N selection. `--nmax-trials` and `--normalization-type` override their JSON values for one run.
+Use `--normalization-type` to override the JSON normalization for one run.
 
 Linear analysis is performed separately for each method/tolerance group and for both scatter outcomes: maximum insertion depth and maximum absolute axial slip versus initial angular error. Groups with fewer than three finite pairs or constant inputs or outputs are reported as unavailable rather than assigned misleading statistics.
 
@@ -542,7 +538,7 @@ Run the unit test suite from the repository root:
 PYTHONPATH=. pytest -q
 ```
 
-The tests cover timestamp-gap handling, configuration paths, scale fallback, optional camera and hand inputs, geometry, plotting, cumulative normalization and regression, extraction, rendering, and failure resilience.
+The tests cover timestamp-gap handling, configuration paths, scale fallback, optional camera and hand inputs, geometry, plotting, cumulative comparisons, extraction, rendering, galleries, and failure resilience.
 
 ## Troubleshooting
 
@@ -571,9 +567,6 @@ If `torch.cuda.is_available()` is false, install a PyTorch wheel compatible with
 ## Cumulative method comparison
 
 Use a JSON specification to compare multiple methods across tolerance levels. Set top-level `font_name` and `font_size` values to control the Matplotlib font family and base font size for all cumulative plots. Each figure row is one tolerance. The three columns show insertion depth, axial slip, and lateral slip using the existing distribution style: method-colored mean bars, 95% confidence intervals, individual trial markers, and short trial labels. The complete figure uses one shared y-axis range so all outcomes and tolerance rows are directly comparable.
-
-Copy and edit the included example:
-If `torch.cuda.is_available()` is false, install a PyTorch wheel compatible with the installed NVIDIA driver and required CUDA runtime.
 
 ### No or multiple timestamp gaps
 
@@ -631,64 +624,6 @@ Pixel outputs remain available when a physical dimension is absent.
 ├── pyproject.toml
 └── README.md
 ```
-```json
-"normalization_type": "zscore",
-"normalization_scope": "group"
-```
-
-`normalization_scope` controls which selected trials provide the normalization statistics: `"group"` uses each method/tolerance pair independently, `"tolerance"` pools methods within each tolerance, and `"global"` pools all methods and tolerances. The default is `"group"`.
-
-Supported normalization values are:
-
-- `"none"`: raw initial angular error in degrees.
-- `"max"`: divide by the maximum absolute initial angle within each method and tolerance pair.
-- `"minmax"`: map the minimum and maximum initial angles within each method and tolerance pair to 0 and 1.
-- `"zscore"`: subtract the group mean and divide by the population standard deviation within each method and tolerance pair.
-
-Normalization uses only trials selected after applying per-method, per-tolerance `nmax_trials`. For constant groups, the scale safely falls back to `1.0`, so min-max values and z-scores are zero. `plotted_trials.csv` records `angle_normalization_type`, `initial_angular_error_group_mean_deg`, `initial_angular_error_group_min_deg`, `initial_angular_error_group_max_deg`, `initial_angular_error_group_scale_deg`, and `normalized_initial_angular_error`. Override the JSON for one run with `--normalization-type none`, `max`, `minmax`, or `zscore`. The legacy `normalized_angle: true` setting is still accepted and maps to `"max"`.
-
-
-Configure per-group linear analysis for both angle-outcome scatter rows:
-
-```json
-"linear_analysis": {
-  "enabled": true,
-  "show_fit": true,
-  "show_statistics": true,
-  "confidence_band": false,
-  "alpha": 0.05,
-  "line_width": 1.8
-}
-```
-
-For every method/tolerance group, the scatter figure draws an optional least-squares fit. Set `line_width` to control the fitted-line thickness. It reports `n`, Pearson's `r`, the two-sided p-value, and `R²`. The command also writes `linear_correlations.csv` with the slope, intercept, standard errors, normalization settings, and a cautious interpretation. Groups with fewer than three finite pairs or constant input/output values are recorded as unavailable rather than assigned misleading statistics. Set `linear_analysis` to `false` to hide fits and annotations while still exporting the numerical analysis.
-
-Control horizontal jitter in the angle-outcome scatter plots with a top-level value (in current x-axis units):
-
-```json
-"x_jitter": 0.03
-```
-
-A dataset entry may override it with its own `"x_jitter"`. Jitter is deterministic per trial within each method/tolerance group and the same offset is reused across outcome panes. For bounded `max`/`minmax` normalized axes, exactly one normalized maximum per tolerance/outcome pane remains at `x=1`; all other out-of-domain jitter draws are rejected and resampled rather than clamped. Jitter affects only displayed scatter x positions, not normalization or linear statistics.
-
-Optionally bootstrap synthetic trial points from each dataset with `"synthetic_n"` (global or per dataset). `"synthetic_seed"` controls reproducibility. Synthetic rows are marked by a `synthetic` column and receive `synthetic_XXXXXX` demo names. The bootstrap resamples complete observed rows, preserving relationships among the recorded metrics. Use `0` to disable it.
-
-Set the optional maximum number of plotted trials at the top level:
-
-```json
-"nmax_trials": 10
-```
-
-For every method at every tolerance, this independently selects the N trials with the greatest `max_insertion_depth_mm`. For example, with two methods, three tolerances, and `nmax_trials: 10`, the figure can include up to 60 trials. The CLI option `--nmax-trials` overrides the JSON value for one run. Omit the setting or use `null` to plot all trials.
-
-Set the optional top-level failure threshold in millimetres:
-
-```json
-"insertion_depth_threshold": 20.0
-```
-
-A trial whose `max_insertion_depth_mm` is below this threshold is drawn with an `x` marker in every outcome panel. Trials meeting the threshold retain circular markers. Omit the setting or use `null` to disable failure markers. Within each tolerance row, only methods that actually have data are shown on the x-axis; if one method is present, that row has one method label.
-
 ## Optional secondary camera and hand tracking
 
 Only `main_camera_serial` and `text_prompts.main.peg` are required. To run on a
@@ -708,3 +643,51 @@ the demonstration to fail:
 The `holder` prompt is also optional because the current metrics do not depend
 on it. Existing configurations that provide both cameras and all three prompts
 retain their previous behavior.
+
+### Render cumulative trial video galleries
+
+After `cumulative-plot`, render exactly the plotted physical trials as one MP4 per tolerance:
+
+```bash
+peg-analysis cumulative-gallery \
+  --spec cumulative.json \
+  -o cumulative_results
+```
+
+The command reads `cumulative_results/plotted_trials.csv` by default and renders the physical trials represented there.
+
+Gallery layout is method-grouped. With multiple methods, every method occupies a 5-row by 2-column block; when a tolerance contains only one method, that group is rotated to 2 rows by 5 columns. Videos begin at shallow engagement and run to each trial's final recorded frame. A trial's `highlight` value in its original `summary.csv` is interpreted as the global frame index at which its success/failure border first appears. Missing `highlight` values, or values earlier than shallow engagement, are replaced by the trial's final frame. The border remains visible thereafter: green when `max_insertion_depth_mm >= insertion_depth_threshold`, red otherwise.
+
+Optional JSON settings are:
+
+```json
+"video_gallery": {
+  "shallow_engagement_depth_mm": 2.0,
+  "fps": 30.0,
+  "cell_width": 320,
+  "cell_height": 240,
+  "trials_per_method": 10,
+  "seed": 0,
+  "truncate_at_max_depth": false,
+  "group_by_tolerance": true,
+  "highlight_early_seconds": 0.0
+}
+```
+
+`shallow_engagement_depth_mm` defaults to 2 mm. The frame is inferred from each compact main-camera time series using the scale implied by the recorded maximum-depth frame and `max_insertion_depth_mm`; if that cannot be recovered, insertion onset is used as the conservative fallback. A per-dataset/method gallery is always rendered for every configured dataset entry. With the supplied six dataset entries this means six separate method videos, each using the 2-row by 5-column layout. `video_gallery.group_by_tolerance` is additive: when `true`, the renderer also creates aggregate tolerance videos that combine all methods available at each tolerance; when `false`, only the six per-dataset/method videos are produced. The default is `true`.
+
+Set `video_gallery.highlight_early_seconds` to a non-negative duration to make a valid border appear that many seconds before its `highlight` frame. The shift uses the original HDF5 `host_timestamp_ns`, rather than the MP4 playback FPS, so the requested duration is measured in actual recorded time and is clamped to shallow engagement. The gallery always refreshes `highlight` from each trial's original `source_summary`/`summary.csv`, so an older `plotted_trials.csv` does not silently lose later manual highlight edits. Missing or pre-engagement `highlight` values retain the existing final-frame fallback and are not advanced.
+
+Set `video_gallery.truncate_at_max_depth` to `true` to end each trial at its `max_depth_frame` instead of the final recorded frame. The default is `false`. When truncation is enabled, `highlight` is still interpreted globally but is clamped to `max_depth_frame`; therefore a missing, pre-engagement, or later-than-maximum-depth highlight appears on that trial's final displayed frame. Shorter trials hold their final displayed frame while longer trials finish, so the grid remains synchronized and stable.
+
+Gallery success classification can also reject implausibly large insertion depths. For a standalone directory gallery use `--anomalous-depth MM`; a trial at or above that maximum insertion depth is colored as a failure even if it passes `--insertion-depth-threshold`. For cumulative galleries, set `video_gallery.anomalous_depth_mm` to the same upper failure boundary.
+
+Both gallery workflows support first/last selection. The standalone CLI uses mutually exclusive `--first-n N` and `--last-n N`. The shared spec accepts mutually exclusive `video_gallery.first_n` and `video_gallery.last_n`. Use `null` for both to disable selection.
+
+
+Both gallery CLIs can use the same JSON spec. For a standalone directory gallery, pass `--spec cumulative.json`; values under `video_gallery` become its defaults, including `fps`, `shallow_engagement_depth_mm`, `highlight_early_seconds`, `truncate_at_max_depth`, `anomalous_depth_mm`, `first_n`, `last_n`, `cell_width`, and `cell_height`. The standalone gallery also uses the spec's top-level `insertion_depth_threshold` unless `--insertion-depth-threshold` overrides it. Explicit standalone CLI options always take precedence over the spec. For boolean max-depth truncation, use `--truncate-at-max-depth` or `--no-truncate-at-max-depth` to explicitly override the spec.
+
+```bash
+peg-analysis gallery --input-dir /path/to/analyzed_dataset --spec cumulative.json
+peg-analysis gallery --input-dir /path/to/analyzed_dataset --spec cumulative.json --last-n 5 --anomalous-depth 35
+```

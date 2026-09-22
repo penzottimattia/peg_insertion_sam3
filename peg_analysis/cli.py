@@ -182,6 +182,33 @@ def main():
         help='Scatter angle normalization; overrides normalization_type in JSON',
     )
 
+    dir_gallery = sub.add_parser(
+        'gallery',
+        help='Render a video gallery directly from one analyzed directory',
+    )
+    dir_gallery.add_argument('--input-dir', required=True, help='Analyzed directory containing summary.csv, time series, and masks')
+    dir_gallery.add_argument('--spec', help='JSON spec providing video_gallery defaults; CLI options override it')
+    selection = dir_gallery.add_mutually_exclusive_group()
+    selection.add_argument('--first-n', type=int, default=None, help='Use the first N trials in summary.csv order')
+    selection.add_argument('--last-n', type=int, default=None, help='Use the last N trials in summary.csv order')
+    dir_gallery.add_argument('-o', '--output', help='Output MP4 path (default: <input-dir>/gallery.mp4)')
+    dir_gallery.add_argument('--fps', type=float, default=None, help='Output video FPS (default: 24)')
+    dir_gallery.add_argument('--shallow-engagement-depth-mm', type=float, default=None)
+    dir_gallery.add_argument('--highlight-early-seconds', type=float, default=None)
+    dir_gallery.add_argument('--truncate-at-max-depth', action=argparse.BooleanOptionalAction, default=None)
+    dir_gallery.add_argument('--insertion-depth-threshold', type=float, default=None)
+    dir_gallery.add_argument('--anomalous-depth', type=float, help='Treat max insertion depth at or above this value (mm) as failure')
+    dir_gallery.add_argument('--cell-width', type=int, default=None)
+    dir_gallery.add_argument('--cell-height', type=int, default=None)
+
+    gallery = sub.add_parser(
+        'cumulative-gallery',
+        help='Render plotted cumulative trials as one video gallery per tolerance',
+    )
+    gallery.add_argument('--spec', required=True, help='Cumulative JSON specification')
+    gallery.add_argument('--trials', help='plotted_trials.csv; defaults to <output-dir>/plotted_trials.csv')
+    gallery.add_argument('-o', '--output-dir', help='Cumulative output directory')
+
     gap = sub.add_parser(
         'insert-gap',
         help='Manually insert a timestamp gap before a frame in one demo',
@@ -239,6 +266,28 @@ def main():
         cumulative_plots(
             a.spec, a.output_dir, a.nmax_trials, a.normalization_type
         )
+        return
+
+    if a.command == 'gallery':
+        if a.first_n is not None and a.first_n < 1:
+            dir_gallery.error('--first-n must be at least 1')
+        if a.last_n is not None and a.last_n < 1:
+            dir_gallery.error('--last-n must be at least 1')
+        from .gallery import render_directory_gallery
+        render_directory_gallery(
+            a.input_dir, spec_path=a.spec, first_n=a.first_n, last_n=a.last_n, output=a.output,
+            fps=a.fps, shallow_depth_mm=a.shallow_engagement_depth_mm,
+            highlight_early_seconds=a.highlight_early_seconds,
+            truncate_at_max_depth=a.truncate_at_max_depth,
+            insertion_depth_threshold_mm=a.insertion_depth_threshold,
+            anomalous_depth_mm=a.anomalous_depth,
+            cell_width=a.cell_width, cell_height=a.cell_height,
+        )
+        return
+
+    if a.command == 'cumulative-gallery':
+        from .gallery import render_cumulative_gallery
+        render_cumulative_gallery(a.spec, a.trials, a.output_dir)
         return
 
     if a.command == 'insert-gap':
