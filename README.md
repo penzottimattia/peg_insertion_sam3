@@ -731,6 +731,9 @@ Both gallery CLIs can use the same JSON spec. For a standalone directory gallery
 ```bash
 peg-analysis gallery --input-dir /path/to/analyzed_dataset --spec cumulative.json
 peg-analysis gallery --input-dir /path/to/analyzed_dataset --spec cumulative.json --last-n 5 --anomalous-depth 35
+peg-analysis gallery --input-dir /path/to/analyzed_dataset --tolerance 1.0
 ```
+
+Cumulative gallery videos label their tolerance in the header. The standalone `gallery` command also labels the tolerance when `--tolerance MM` is supplied.
 
 For gallery timing, set both `video_gallery.dataset_fps` (the known recording FPS) and `video_gallery.fps` (the exported MP4 FPS). The renderer uses `dataset_fps` to map recorded frames into export frames without changing the recording's real-time duration. Every exported gallery MP4 contains its own progress strip at the bottom with a completion bar plus `Elapsed` and `Remaining` playback time. The standalone `gallery` command reads both values from the same spec and may override them with `--dataset-fps` and `--fps`.

@@ -460,6 +460,7 @@ def render_cumulative_gallery(spec_path, trials_path=None, output_dir=None):
         # Multiple methods: each is a 2-column x 5-row block. One method: 5 columns x 2 rows.
         rows, cols_per_group = ((2, 5) if len(groups) == 1 else (5, 2))
         total_cols = cols_per_group * len(groups)
+        column_gap = max(12, round(cell_width * 0.05)) if len(groups) > 1 else 0
         prepared = []
         max_len = 0
         for method, group in groups:
@@ -471,9 +472,10 @@ def render_cumulative_gallery(spec_path, trials_path=None, output_dir=None):
                 max_len = max(max_len, len(frames))
             prepared.append((method, trials))
 
-        method_header = 38
+        method_header = 68
         progress_height = 34
-        canvas_size = (total_cols * cell_width, rows * cell_height + method_header + progress_height)
+        canvas_size = (total_cols * cell_width + column_gap * max(len(groups) - 1, 0),
+                       rows * cell_height + method_header + progress_height)
         safe_tol = str(tolerance).replace(".", "_")
         if unit["kind"] == "tolerance":
             path = output_dir / f"gallery_tolerance_{safe_tol}.mp4"
@@ -486,10 +488,13 @@ def render_cumulative_gallery(spec_path, trials_path=None, output_dir=None):
         try:
             for out_i in range(max_len):
                 canvas = np.zeros((canvas_size[1], canvas_size[0], 3), dtype=np.uint8)
+                tolerance_text = f"{cfg['tolerance_label']}: {tolerance}"
+                cv2.putText(canvas, tolerance_text, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.72,
+                            (240, 240, 240), 2, cv2.LINE_AA)
                 for gi, (method, trials) in enumerate(prepared):
                     label = cfg["methods"][method]["label"]
-                    x0 = gi * cols_per_group * cell_width
-                    cv2.putText(canvas, label, (x0 + 10, 27), cv2.FONT_HERSHEY_SIMPLEX, 0.78,
+                    x0 = gi * cols_per_group * cell_width + gi * column_gap
+                    cv2.putText(canvas, label, (x0 + 10, 57), cv2.FONT_HERSHEY_SIMPLEX, 0.78,
                                 (240, 240, 240), 2, cv2.LINE_AA)
                     for slot, (row, frames, start, highlight, success) in enumerate(trials):
                         rr, cc = divmod(slot, cols_per_group)
@@ -526,7 +531,7 @@ def render_cumulative_gallery(spec_path, trials_path=None, output_dir=None):
     return outputs
 
 def render_directory_gallery(input_dir, spec_path=None, first_n=None, last_n=None, output=None,
-                             fps=None, dataset_fps=None, shallow_depth_mm=None,
+                             fps=None, dataset_fps=None, tolerance=None, shallow_depth_mm=None,
                              highlight_early_seconds=None,
                              truncate_at_max_depth=None,
                              insertion_depth_threshold_mm=None,
@@ -627,7 +632,8 @@ def render_directory_gallery(input_dir, spec_path=None, first_n=None, last_n=Non
     cols = min(5, count)
     rows = int(np.ceil(count / cols))
     progress_height = 34
-    canvas_size = (cols * int(cell_width), rows * int(cell_height) + progress_height)
+    tolerance_header = 38 if tolerance is not None else 0
+    canvas_size = (cols * int(cell_width), rows * int(cell_height) + tolerance_header + progress_height)
     output_path = (Path(output).expanduser().resolve() if output else
                    input_dir / "gallery.mp4")
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -638,13 +644,16 @@ def render_directory_gallery(input_dir, spec_path=None, first_n=None, last_n=Non
     try:
         for out_i in range(max_len):
             canvas = np.zeros((canvas_size[1], canvas_size[0], 3), dtype=np.uint8)
+            if tolerance is not None:
+                cv2.putText(canvas, f"Peg tolerance (mm): {tolerance}", (10, 27),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.72, (240, 240, 240), 2, cv2.LINE_AA)
             for slot, (row, frames, start, highlight, success) in enumerate(prepared):
                 rr, cc = divmod(slot, cols)
                 idx = min(out_i, len(frames) - 1)
                 global_frame = start + idx
                 cell = _draw_cell(frames[idx], success, global_frame >= highlight,
                                   (int(cell_width), int(cell_height)))
-                y, x = rr * int(cell_height), cc * int(cell_width)
+                y, x = tolerance_header + rr * int(cell_height), cc * int(cell_width)
                 canvas[y:y + int(cell_height), x:x + int(cell_width)] = cell
             _draw_video_progress(canvas, out_i, max_len, dataset_fps, progress_height)
             writer.write(cv2.cvtColor(canvas, cv2.COLOR_RGB2BGR))

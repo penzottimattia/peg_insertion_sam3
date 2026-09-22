@@ -142,3 +142,24 @@ def test_example_exposes_synthetic_highlight_jitter():
     from pathlib import Path
     config = json.loads((Path(__file__).parents[1] / "cumulative.example.json").read_text())
     assert config["video_gallery"]["synthetic_highlight_jitter_seconds"] == 0.25
+
+
+def test_directory_gallery_accepts_tolerance_parameter():
+    import inspect
+    from peg_analysis.gallery import render_directory_gallery
+    assert "tolerance" in inspect.signature(render_directory_gallery).parameters
+
+def test_cumulative_gallery_draws_tolerance_header():
+    import inspect
+    from peg_analysis import gallery
+    source = inspect.getsource(gallery.render_cumulative_gallery)
+    assert "tolerance_text" in source
+    assert "tolerance_label" in source
+
+
+def test_cumulative_gallery_separates_method_column_blocks():
+    import inspect
+    from peg_analysis import gallery
+    source = inspect.getsource(gallery.render_cumulative_gallery)
+    assert "column_gap" in source
+    assert "gi * column_gap" in source
